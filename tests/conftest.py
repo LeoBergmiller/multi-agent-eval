@@ -7,7 +7,9 @@ test here runs offline.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -18,6 +20,103 @@ import pytest
 from analyst.artifacts import ResultStore
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+#: Committed files a test run is *allowed* to modify. Empty, and expected to stay that
+#: way — a test that needs to write should write into `tmp_path`.
+#:
+#: The guard is an inverted default: **every** git-tracked file is protected, and
+#: exceptions are listed here with a reason. Scoping it to `data/` and `cassettes/`
+#: would have covered all three instances found so far, which is exactly why it would
+#: miss the fourth: `runs/` gains committed artifacts at 1d, and `docs/task-intents.md`
+#: and `config/agents.yaml` are both plausible targets for a future generator. An
+#: inverted default covers those without anyone remembering to widen the scope.
+ARTIFACT_WRITE_ALLOWLIST: frozenset[str] = frozenset()
+
+
+def _tracked_file_hashes() -> dict[str, str]:
+    """sha256 of every git-tracked file in the repo, minus the allowlist.
+
+    Git-tracked rather than a directory walk, because the interesting files sit beside
+    large gitignored ones — `data/warehouse.duckdb`, `data/synthea/`, `data/index/` —
+    and only the committed ones are the repo's contract.
+    """
+    listing = subprocess.run(
+        ["git", "ls-files", "-z"],
+        capture_output=True,
+        check=True,
+        cwd=REPO_ROOT,
+    )
+    hashes: dict[str, str] = {}
+    for raw in listing.stdout.split(b"\0"):
+        if not raw:
+            continue
+        name = raw.decode()
+        if name in ARTIFACT_WRITE_ALLOWLIST:
+            continue
+        path = REPO_ROOT / name
+        if path.is_file():
+            hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return hashes
+
+
+@pytest.fixture(scope="session", autouse=True)
+def committed_artifacts_are_read_only() -> Iterator[None]:
+    """No test may rewrite any git-tracked file.
+
+    **This guards a class, not a case.** The same defect has now been found three times,
+    each time as a module-level path constant that a test drove into the real repo: the
+    cassette manifest resolving from the repo root instead of `cassettes_root()`
+    (gate-1a.md §3, eighth instance); `messify._restamp_version` writing the committed
+    `warehouse_version.txt`; and `messify_summary.json`, which had been overwritten from
+    a test fixture since step 3 and was caught only by diffing a regeneration.
+
+    Every one of those was fixed by threading a path through, and every fix was specific
+    to the artifact that happened to be noticed. A fourth constant introduced later
+    would not be covered by any of them. This sits above the per-artifact assertions —
+    which stay, because they say *what* went wrong — and fails on any file, from any
+    test, however the write got there.
+
+    The failure mode it exists for is not a crash. A test-written artifact looks
+    authoritative: `messify_summary.json` carried five correct counts and one wrong
+    organization name, and nothing about it invited a second look.
+
+    **It cannot fire spuriously.** Each file is compared against *itself* before and
+    after the run, never against the index, so `core.autocrlf`, `.gitattributes` and
+    smudge/clean filters are all invisible to it. Only an actual write during the
+    session changes a hash. That is what makes raising — rather than skipping — the
+    right behaviour when git is unavailable: the check has no false-positive mode to
+    trade against, so the only question is whether it runs at all, and a repo-integrity
+    guard that silently passes when it cannot run is worse than no guard.
+
+    Git is present everywhere this suite runs: CI checks the repo out, and developers
+    work in a clone. Docker-based tests (the sandbox, from step 4) shell out to a
+    container from a host process that has git — the guard runs on the host and never
+    inside the container.
+    """
+    try:
+        before = _tracked_file_hashes()
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        raise RuntimeError(
+            "Cannot enumerate git-tracked files, so the committed-artifact guard "
+            "cannot run. This check protects data/ and cassettes/ from being "
+            "rewritten by a test; it is not disabled silently."
+        ) from exc
+
+    yield
+
+    after = _tracked_file_hashes()
+    modified = sorted(p for p, h in before.items() if after.get(p) != h)
+    if modified:
+        listing = "\n".join(f"  {p}" for p in modified)
+        raise AssertionError(
+            "The test run rewrote committed artifacts:\n"
+            f"{listing}\n\n"
+            "A test wrote through a module-level path constant into the real repo. "
+            "Resolve the path from the object under test (the warehouse being "
+            "messified, the cassette root being recorded into) rather than from a "
+            "module-level default, and restore the files above with `git checkout`."
+        )
 
 
 @pytest.fixture
