@@ -1,7 +1,13 @@
-# Open stays (still-admitted patients)
+# Encounters with no discharge timestamp — open stays
 
-An encounter with a **null `STOP`** is a stay that has not ended: the patient is still
-admitted as of the data cut.
+An encounter whose **discharge timestamp is missing** — `STOP` is null, there is no
+discharge date and no discharge time — is a stay that has not ended. The patient is
+still admitted as of the data cut, so the discharge does not exist yet rather than
+having been lost.
+
+This is the absence of a value, not a wrong one: there is nothing to compare, nothing to
+subtract, and no discharge event to join onto. (A discharge that is recorded but invalid
+is a separate problem — see [[reversed_stays]].)
 
 `STOP` is a real `TIMESTAMP` column and the missing values are genuine SQL `NULL`s, not
 empty strings. Comparisons against them return `NULL` rather than false, so they drop

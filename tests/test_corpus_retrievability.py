@@ -35,6 +35,11 @@ GOVERNED_BY_QUESTION: list[tuple[str, str]] = [
     # task 2
     ("how many admissions were there last year?", "admission"),
     ("should patients who are still admitted be counted?", "open_stays"),
+    # The DATA-shaped phrasing, which is how the observation actually presents: the
+    # agent sees a null STOP, not a patient. Added after it was found unreachable —
+    # and worse, confidently answered by `reversed_stays` at rank 1.
+    ("how do I handle encounters with a missing discharge timestamp?", "open_stays"),
+    ("some encounters have no discharge date - should they be counted?", "open_stays"),
     # task 3
     ("what is the distribution of inpatient length of stay?", "length_of_stay"),
     ("encounters where the discharge is before the admission", "reversed_stays"),
@@ -59,6 +64,49 @@ GOVERNED_BY_QUESTION: list[tuple[str, str]] = [
     # task 7
     (
         "readmission rate counting only returns to the same organization",
+        "readmission_30day_same_facility",
+    ),
+]
+
+#: The **frozen question text itself**, verbatim from
+#: `evals/tasks/frozen_questions.yaml`.
+#:
+#: The probes above are deliberate paraphrases — sub-questions an agent might form on
+#: the way to an answer, which is the realistic shape of a lookup. But an agent may also
+#: query with the task's own wording, and once the questions were frozen those two sets
+#: could drift apart: retrieval would then be verified against phrasings no task uses.
+#: So the frozen text is probed too, and any reword breaks the hash test and lands here.
+#:
+#: **These entries have never been executed.** The `[rag]` extra is not installed here,
+#: environment, so this whole module skips; they are asserted coverage, not verified
+#: coverage, until `make install-rag && make index` runs. Recorded plainly because a
+#: skipped test proves nothing (gate-1a.md §3, thirteenth instance).
+FROZEN_QUESTION_PROBES: list[tuple[str, str]] = [
+    (
+        "How many admissions did we have in 2025?",
+        "admission",
+    ),
+    (
+        "What does inpatient length of stay look like? I'd like the median, the 90th "
+        "percentile, and the share of stays longer than a week.",
+        "length_of_stay",
+    ),
+    (
+        "What was our 30-day readmission rate for inpatient discharges in 2025, and "
+        "how did it differ between our two busiest organizations?",
+        "readmission_30day",
+    ),
+    (
+        "What was our payer mix for inpatient care in 2025?",
+        "payer_mix_denominator",
+    ),
+    (
+        "How many inpatient encounters started in 2023?",
+        "encounter_deduplication",
+    ),
+    (
+        "What was our readmission rate for inpatient discharges in 2025, counting only "
+        "readmissions to the same organization?",
         "readmission_30day_same_facility",
     ),
 ]
@@ -111,7 +159,9 @@ def test_every_load_bearing_entry_is_covered_by_a_question() -> None:
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize(("question", "entry"), GOVERNED_BY_QUESTION)
+@pytest.mark.parametrize(
+    ("question", "entry"), GOVERNED_BY_QUESTION + FROZEN_QUESTION_PROBES
+)
 def test_question_retrieves_the_entry_that_governs_it(
     retriever, question: str, entry: str
 ) -> None:
