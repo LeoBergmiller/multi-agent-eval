@@ -5,6 +5,7 @@ from analyst.artifacts.store import (
     ResultStore,
     RunDirectory,
     RunMeta,
+    jsonable,
     new_run_meta,
     runs_root,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "ResultStore",
     "RunDirectory",
     "RunMeta",
+    "jsonable",
     "new_run_meta",
     "runs_root",
 ]

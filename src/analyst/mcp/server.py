@@ -5,9 +5,9 @@ ports. §1/§1.5 name the library "FastMCP"; in mcp 2.x that class is
 `MCPServer` (`mcp.server.mcpserver`). The decorator shape §4 shows is
 unchanged, so the tool signature is as specified. See D22.
 
-Gate 1a registers two tools: `run_sql` and `search_metric_definitions`. The remaining
-three tools, the resources and the prompts in §4 land later in Gate 1 — absent here
-rather than stubbed.
+Gate 1a step 5 registers `run_sql`, `search_metric_definitions`, `describe_schema` and
+`describe_table`. `run_python`, the resource and the prompts follow in this same step —
+absent here rather than stubbed until they land.
 
 Run standalone:
     python -m analyst.mcp.server --warehouse data/warehouse.duckdb \\
@@ -25,6 +25,7 @@ from mcp.server.mcpserver import MCPServer
 
 from analyst.artifacts import ResultStore
 from analyst.mcp.tools.retrieval import DefinitionSearcher, SearchResult
+from analyst.mcp.tools.schema import SchemaDescriber, SchemaSummary, TableProfile
 from analyst.mcp.tools.sql import QueryResult, SqlRunner
 
 SERVER_NAME = "analyst-warehouse"
@@ -52,14 +53,41 @@ def build_server(
         ),
     )
     runner = SqlRunner(warehouse, ResultStore(results_dir))
+    describer = SchemaDescriber(warehouse)
+
+    @server.tool(name="describe_schema")
+    def describe_schema() -> SchemaSummary:
+        """List the warehouse tables, their row counts, and their column names.
+
+        Start here when you do not already know what the warehouse holds. For a
+        single table's column types and some example rows, use describe_table.
+        """
+        return describer.describe_schema()
+
+    @server.tool(name="describe_table")
+    def describe_table(table: str) -> TableProfile:
+        """Describe one table: its columns, their types, and a few example rows.
+
+        This reports the table's SHAPE, not statistics about its contents. It does
+        not tell you how many values in a column are null, how many distinct values
+        a column holds, or what its range is. Those are queries — write them with
+        run_sql if the subtask needs them.
+
+        The example rows are a fixed, deterministically-ordered handful. They show
+        what a row looks like; they are not a representative summary of the table.
+
+        Args:
+            table: An allow-listed table name, as returned by describe_schema.
+        """
+        return describer.describe_table(table)
 
     @server.tool(name="run_sql")
     def run_sql(query: str, max_rows: int = 1000) -> QueryResult:
         """Run a read-only SELECT against the warehouse.
 
         Returns a reference to the result (schema, row count, and the first five
-        rows) — never the full result set. Only the allow-listed tables
-        patients, encounters and organizations may be queried.
+        rows) — never the full result set. Only the allow-listed tables may be
+        queried; describe_schema lists them.
 
         Args:
             query: A single SELECT (optionally with CTEs). No DDL, DML, COPY,

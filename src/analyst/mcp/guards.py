@@ -35,10 +35,29 @@ from sqlglot.errors import ParseError
 
 DIALECT: Final = "duckdb"
 
-#: Tables `run_sql` may read. Gate 0 ships three; Synthea's other nine arrive
-#: with the ingest at Gate 1.
+#: Tables `run_sql` may read, and — the same list, deliberately — the tables
+#: `describe_schema` and `describe_table` will describe. A table that is describable
+#: but not queryable (or the reverse) is a silent inconsistency the agent discovers
+#: by hitting it, so both tools share one constant.
+#:
+#: These are the nine Synthea tables `data/synthea_spec.py` loads. The list is
+#: duplicated here rather than imported from it: `data/` is not a package and is not
+#: in pyproject's `packages`, so importing it would only resolve when the CWD happened
+#: to put the repo root on `sys.path` — the Gate 0 CWD bug in a new place. The
+#: coupling is enforced by a test asserting this equals `set(synthea_spec.SCHEMAS)`
+#: instead, which fails loudly on drift and needs no import at runtime.
 ALLOWED_TABLES: Final[frozenset[str]] = frozenset(
-    {"patients", "encounters", "organizations"}
+    {
+        "patients",
+        "organizations",
+        "providers",
+        "payers",
+        "encounters",
+        "conditions",
+        "procedures",
+        "claims",
+        "payer_transitions",
+    }
 )
 
 #: Hard ceiling on rows a single query may return, whatever the caller asks for.

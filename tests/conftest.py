@@ -129,6 +129,158 @@ def warehouse(tmp_path: Path) -> Path:
     return path
 
 
+#: The ten `ENCOUNTERCLASS` values Synthea emits. More than `HEAD_ROWS`, deliberately:
+#: the point of the class-set guard is that a five-row sample *cannot* enumerate them,
+#: and a fixture with five or fewer classes would let the guard pass for the wrong
+#: reason.
+ENCOUNTER_CLASSES = (
+    "ambulatory",
+    "emergency",
+    "home",
+    "hospice",
+    "inpatient",
+    "outpatient",
+    "snf",
+    "urgentcare",
+    "virtual",
+    "wellness",
+)
+
+
+@pytest.fixture
+def synthea_warehouse(tmp_path: Path) -> Path:
+    """All nine tables, with their columns generated from `data/synthea_spec.py`.
+
+    Distinct from the `warehouse` fixture, which is three tables shaped for the Gate 0
+    record path and is left alone so that path keeps testing what it tested.
+
+    The DDL is generated from the spec rather than written out, so this fixture cannot
+    drift from it. That does make the CI-safe half of the column-shape assertion
+    partly circular — it proves `describe_table` reports the catalog faithfully, not
+    that the catalog matches the spec. The non-circular half is the integration run of
+    the same assertions against the real warehouse, which is where a Synthea format
+    change would actually show up.
+
+    Pathologies mirror `messify.py` in kind, not in count: duplicated encounter rows
+    sharing an `Id`, and null `STOP` for still-admitted patients. The guards compute
+    the true statistics from this database rather than hardcoding them, so the numbers
+    here are free to change.
+    """
+    from data import synthea_spec
+
+    path = tmp_path / "synthea.duckdb"
+    con = duckdb.connect(str(path))
+    try:
+        for table, columns in synthea_spec.SCHEMAS.items():
+            ddl = ", ".join(f'"{n}" {t}' for n, t in columns.items())
+            con.execute(f'CREATE TABLE "{table}" ({ddl})')
+
+        classes = ", ".join(f"'{c}'" for c in ENCOUNTER_CLASSES)
+        # Costs are deliberately non-round: an integer-valued float in the sample
+        # would land in the "numbers disclosed by this payload" set and could collide
+        # with a pathology count, turning a real guard into a coin flip.
+        con.execute(
+            f"""
+            INSERT INTO encounters SELECT
+              'e' || lpad(CAST(i AS VARCHAR), 4, '0'),
+              TIMESTAMP '2023-01-01 08:00:00' + INTERVAL (i) HOUR,
+              CASE WHEN i % 17 = 0 THEN NULL
+                   ELSE TIMESTAMP '2023-01-03 10:00:00' + INTERVAL (i) HOUR END,
+              'p' || CAST(i % 20 AS VARCHAR), 'org-1', 'prv-1', 'pay-1',
+              ([{classes}])[(i % {len(ENCOUNTER_CLASSES)}) + 1],
+              '162673000', 'General examination of patient',
+              142.58, 278.58, 63.41, NULL, NULL
+            FROM range(120) t(i)
+            """
+        )
+        # Double-posted feed: byte-identical rows sharing an Id, exactly as
+        # messify.inject_duplicate_encounters produces them.
+        con.execute(
+            "INSERT INTO encounters SELECT * FROM encounters "
+            "WHERE Id IN ('e0004', 'e0009', 'e0014')"
+        )
+        con.execute(
+            "INSERT INTO organizations VALUES "
+            "('org-1', 'Mass General', '55 Fruit St', 'Boston', 'MA', '02114', "
+            "42.36, -71.07, '555-0100', 1234.56, 99)"
+        )
+        con.execute(
+            "INSERT INTO payers VALUES "
+            "('pay-1', 'Aetna', 'PRIVATE', '1 Main St', 'Hartford', 'CT', '06103', "
+            "'555-0200', 1.5, 2.5, 3.5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16.5, 17)"
+        )
+    finally:
+        con.close()
+    return path
+
+
+@pytest.fixture
+def clean_warehouse(tmp_path: Path) -> Path:
+    """A Synthea-shaped warehouse with no pathologies: every stay closed.
+
+    Carries two things a bare fixture would not, because `messify` now re-stamps the
+    warehouse's identity and both are part of what it stamps: every table named in the
+    spec (the content digest covers all nine and a missing one is a hard error), and
+    the `warehouse_version.txt` that `build_warehouse.py` always leaves behind. The
+    version file lives beside *this* warehouse, so re-stamping cannot reach the
+    committed one.
+    """
+    from data import synthea_spec
+
+    path = tmp_path / "warehouse.duckdb"
+    (tmp_path / "warehouse_version.txt").write_text("synthea-test-recipe\n")
+    con = duckdb.connect(str(path))
+    try:
+        # Every table generated from the spec, so the fixture cannot drift from the
+        # column set the injections address. It previously declared narrow shapes for
+        # encounters/organizations/payers, and `inject_payer_split` — which reads
+        # `encounters.PAYER` and copies the full payer row — could not run against them.
+        for table, columns in synthea_spec.SCHEMAS.items():
+            ddl = ", ".join(f'"{n}" {t}' for n, t in columns.items())
+            con.execute(f'CREATE TABLE "{table}" ({ddl})')
+
+        con.execute(
+            "INSERT INTO organizations (Id, NAME, CITY, STATE) "
+            "SELECT 'org' || i, 'Hospital ' || i, 'Boston', 'MA' FROM range(3) t(i)"
+        )
+        con.execute(
+            "INSERT INTO payers (Id, NAME, AMOUNT_COVERED, REVENUE) "
+            "SELECT 'pay' || i, 'Payer ' || i, 1.5, 2.5 FROM range(6) t(i)"
+        )
+
+        # Three blocks, straddling every date boundary messify keys on. Open stays are
+        # taken from on or after OPEN_STAYS_FROM and reversed stays from before it, and
+        # the payer split repoints encounters from PAYER_SPLIT_DATE — so a fixture
+        # sitting on one side of any boundary would silently inject nothing while every
+        # count still looked plausible.
+        #
+        # `pay0` deliberately carries the most TASK5_YEAR inpatient encounters, so the
+        # split lands on a payer whose rows exist on BOTH sides of PAYER_SPLIT_DATE and
+        # the split is partial rather than degenerate.
+        blocks = (
+            # Task 6 asks about inpatient 2023 specifically, and
+            # `_assert_duplication_is_visible_to_task_6` checks the duplicates land
+            # there — a fixture with no 2023 rows fails that assertion, correctly.
+            ("y2023", "2023-02-01", "2023-02-03", 600),
+            ("old", "2024-01-01", "2024-01-03", 1000),  # before every boundary
+            ("mid", "2025-03-01", "2025-03-03", 600),  # in TASK5_YEAR, pre-split
+            ("new", "2025-08-01", "2025-08-03", 1000),  # in TASK5_YEAR, post-split
+        )
+        for prefix, start, stop, n in blocks:
+            con.execute(
+                "INSERT INTO encounters "
+                "(Id, START, STOP, PATIENT, ORGANIZATION, PAYER, ENCOUNTERCLASS) "
+                f"SELECT '{prefix}' || i, TIMESTAMP '{start}' + INTERVAL (i) HOUR,"
+                f"  TIMESTAMP '{stop}' + INTERVAL (i) HOUR,"
+                "  'p' || (i % 40), 'org' || (i % 3),"
+                "  'pay' || (i % 6), 'inpatient' "
+                f"FROM range({n}) t(i)"
+            )
+    finally:
+        con.close()
+    return path
+
+
 @pytest.fixture
 def store(tmp_path: Path) -> ResultStore:
     return ResultStore(tmp_path / "results")

@@ -125,7 +125,7 @@ class ResultStore:
             f"SELECT * FROM read_parquet('{quoted}') LIMIT {HEAD_ROWS}"
         ).fetchall()
         head = tuple(
-            {c.name: _jsonable(v) for c, v in zip(schema, row, strict=True)}
+            {c.name: jsonable(v) for c, v in zip(schema, row, strict=True)}
             for row in head_rows
         )
 
@@ -139,8 +139,13 @@ class ResultStore:
         )
 
 
-def _jsonable(value: Any) -> Any:
-    """Coerce a DuckDB scalar into something json.dumps can handle."""
+def jsonable(value: Any) -> Any:
+    """Coerce a DuckDB scalar into something json.dumps can handle.
+
+    Public because `describe_table`'s sample rows and `run_sql`'s `head` must render
+    a timestamp the same way. Two private copies would drift, and the drift would
+    show up as one tool disagreeing with another about what a row looks like.
+    """
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
