@@ -20,6 +20,8 @@ help:
 	@echo "make synthea-jar - download + checksum-verify the pinned Synthea jar (~200MB)"
 	@echo "make data     - generate Synthea, build the warehouse, inject pathologies"
 	@echo "                (needs JDK 17+; NOT needed for make demo)"
+	@echo "                ~2.5 min: generation is pinned single-threaded so the"
+	@echo "                population is reproducible from the seed (D29)"
 	@echo "make index    - build the metrics-dictionary index (needs [rag]; ~1.5GB models)"
 	@echo "make demo     - replay the task into runs/$(RUN_ID)/ and print the eval line"
 	@echo "                (no API key, no network, no warehouse required)"
@@ -56,6 +58,11 @@ synthea-jar:
 
 # Regenerates the warehouse deterministically from the seed, clinician seed and
 # reference date committed in data/synthea_spec.py. Needs JDK 17+ and the jar.
+#
+# Takes ~2.5 minutes, most of it generation. Synthea's thread pool is pinned to 1
+# because its default multi-threaded generation is NOT reproducible from a seed — it
+# varies the payers table's float aggregates run to run (D29). That costs ~3x on
+# generation and buys the reproducibility claim the ground-truth protocol rests on.
 #
 # `make demo` deliberately does NOT depend on this: a replayed run needs no
 # warehouse at all. If `demo` ever starts needing `data`, the replay layer has

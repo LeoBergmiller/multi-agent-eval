@@ -38,8 +38,10 @@ from synthea_spec import (
     SEED,
     STATE,
     SYNTHEA_VERSION,
+    THREAD_POOL_SIZE,
     expected_header,
 )
+from warehouse_identity import stamp
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -56,8 +58,14 @@ WAREHOUSE = DATA_DIR / "warehouse.duckdb"
 VERSION_FILE = DATA_DIR / "warehouse_version.txt"
 
 
-def warehouse_version(population: int) -> str:
-    """Identity of the dataset, derived from the pinned generation parameters.
+def generation_recipe(population: int) -> str:
+    """The pinned generation parameters, human-readable.
+
+    This is *half* of the dataset's identity — how it was asked for, not what came
+    out. `messify.py` rewrites the data after the ingest, so a version derived from
+    these parameters alone stayed byte-identical across materially different
+    warehouses and let a stale-cassette check pass silently. The content digest that
+    closes that gap lives in `warehouse_identity.py`; see its module docstring.
 
     Not a hash of the .duckdb file: that is gitignored, differs byte-wise between
     machines, and would make the check unusable exactly where it is needed — on a
@@ -65,7 +73,8 @@ def warehouse_version(population: int) -> str:
     """
     return (
         f"synthea-{SYNTHEA_VERSION}-s{SEED}-cs{CLINICIAN_SEED}"
-        f"-e{END_DATE}-r{REFERENCE_DATE}-p{population}-{STATE}"
+        f"-e{END_DATE}-r{REFERENCE_DATE}-p{population}"
+        f"-t{THREAD_POOL_SIZE}-{STATE}"
     )
 
 
@@ -87,6 +96,11 @@ def synthea_command(population: int) -> list[str]:
         END_DATE,
         "-r",
         REFERENCE_DATE,
+        # Single-threaded, because the default pool is not reproducible from the seed:
+        # it varies `payers`' float aggregates run to run. See THREAD_POOL_SIZE and D29.
+        # Pinning this flag is the argument; the checked outcome is two clean `make
+        # data` runs at production population producing the same content digest.
+        f"--generate.thread_pool_size={THREAD_POOL_SIZE}",
         # CSV on, FHIR off. FHIR is the default exporter, is far larger and slower,
         # and nothing here reads it.
         "--exporter.csv.export=true",
@@ -188,10 +202,14 @@ def ingest(population: int) -> None:
 
         _assert_simulation_ended(con)
         _report_shape(con)
+
+        # Stamped here and re-stamped by messify.py, which runs next and rewrites the
+        # data. An un-messified warehouse really is a different dataset, so it gets a
+        # different version rather than an absent one.
+        version = stamp(generation_recipe(population), con, SCHEMAS)
     finally:
         con.close()
 
-    version = warehouse_version(population)
     VERSION_FILE.write_text(version + "\n")
     logger.info("warehouse_version %s -> %s", version, VERSION_FILE.name)
 

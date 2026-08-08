@@ -9,6 +9,10 @@ generated CSVs and the DuckDB file are **gitignored** — they are derived, and 
 needs no warehouse, no JDK, no network and no API key. Building the warehouse is only
 required to run live or to re-record.
 
+**`make data` takes ~2.5 minutes** (~112s of it Synthea generation, which is pinned
+single-threaded — see below). It needs a JDK 17+ and the ~200MB jar, and it rebuilds
+from scratch rather than incrementally, so it is not something to run casually.
+
 ### Reproducibility
 
 Everything that determines the population is committed in `data/synthea_spec.py`:
@@ -19,9 +23,10 @@ Everything that determines the population is committed in `data/synthea_spec.py`
 | Population | 2000 (yields 2286 patients — Synthea also emits the deceased) |
 | Seed / clinician seed | `20260806` |
 | End date / reference date | `20260101` |
+| Generation thread pool | `1` (single-threaded — see below) |
 | State | Massachusetts |
 
-Two pins are load-bearing in ways that are not obvious:
+Three pins are load-bearing in ways that are not obvious:
 
 - **The jar checksum, not the tag.** Synthea's only rolling release is
   `master-branch-latest`, and even `v4.0.0` reports `immutable: false` — GitHub permits
@@ -34,8 +39,40 @@ Two pins are load-bearing in ways that are not obvious:
   would have produced different counts from the same seed. `-e` bounds the simulation,
   and `_assert_simulation_ended` re-checks the *result* after every ingest rather than
   trusting the flag.
+- **`--generate.thread_pool_size=1`, not Synthea's default pool.** Synthea's default
+  multi-threaded generation **is not reproducible from a seed.** Two clean runs of the
+  identical pinned command produced warehouses differing in four `payers` columns —
+  `AMOUNT_COVERED`, `AMOUNT_UNCOVERED`, `REVENUE`, `QOLS_AVG` — by ~1e-4 relative, far
+  above floating-point noise. Every other table was identical, including all 137,507
+  `encounters` rows. A four-arm experiment isolated it to threading: two multi-threaded
+  runs disagree, two single-threaded runs agree, and the arms differ only in `payers`.
+  See D29 for the mechanism (a hypothesis) and the rejected alternative.
 
-Verified byte-for-byte: two consecutive runs produce identical CSV checksums.
+### What is actually verified
+
+**Reproducible under the pinned single-threaded generator.** Two clean `make data` runs
+at production population produced the identical content fingerprint
+`b31641260c36` — all nine tables, every row. That is the checked claim, and it is
+checked by outcome: pinning the flag is the argument, two matching fingerprints are the
+effect.
+
+**The exception, stated rather than buried:** under Synthea's *default* multi-threaded
+generation the population is not reproducible — `payers`' four float aggregates vary run
+to run. Nothing in the eval reads those columns (task 5's payer mix groups `encounters`
+by payer via `encounters.PAYER` and `payers.NAME`, both deterministic), and pinning the
+pool did not move any other table — `encounters`' digest is unchanged at
+`68867069404455` across the pin, so Gate 0's draft 133 and every seed task are
+unaffected. But that is luck rather than design, and **no task should be authored
+against `payers.AMOUNT_COVERED`, `AMOUNT_UNCOVERED`, `REVENUE` or `QOLS_AVG`.**
+
+Cost of the pin: generation goes from ~35s to ~112s at p=2000. `make data` is rare and
+already downloads a 200MB jar.
+
+The previous version of this section claimed "verified byte-for-byte: two consecutive
+runs produce identical CSV checksums." That claim was false and is the reason this
+section now says what was measured and how. CSV checksums would not have established it
+in any case — Synthea's exporter writes rows in thread-completion order, so file hashes
+differ on row ordering alone. The fingerprint is order-independent by construction.
 
 ### Tables and types
 
@@ -93,6 +130,22 @@ compares `data/warehouse_version.txt` (committed) against `cassettes/manifest.js
 (written by a RECORD run, committed), so it works on a clean clone with no warehouse,
 and it outlives this gate: any future re-seed or re-pin of Synthea invalidates the
 recordings the same way.
+
+That version has two halves — `{generation recipe}+content.{digest}`:
+
+```
+synthea-v4.0.0-s20260806-...-p2000-Massachusetts+content.7305ac38cc91
+└─ how it was asked for ──────────────────────┘ └─ what came out ─┘
+```
+
+The recipe is legible: a human reads the seed and the population off a manifest without
+running anything. **The digest is what actually gates the verdict**, and it exists
+because the recipe alone was silent about `messify.py`. The injections run *after* the
+ingest, so a parameters-only version stayed byte-identical across materially different
+warehouses — edit an injection, re-run `make data`, and the staleness check compared
+equal and reported the cassettes as current. The digest is computed over every row of
+all nine tables *after* messify, which is why `messify.py` and not `build_warehouse.py`
+writes the final stamp. See `data/warehouse_identity.py`.
 
 ### The Gate 0 fixture is gone
 

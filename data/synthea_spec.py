@@ -53,6 +53,24 @@ STATE: Final = "Massachusetts"
 END_DATE: Final = "20260101"
 REFERENCE_DATE: Final = "20260101"
 
+#: **Pinned to 1 because Synthea's default multi-threaded generation is not
+#: reproducible from a seed.** Two clean runs of the identical command produced
+#: warehouses differing in four `payers` columns — `AMOUNT_COVERED`,
+#: `AMOUNT_UNCOVERED`, `REVENUE`, `QOLS_AVG` — by ~1e-4 relative, far above float noise.
+#: Every other table, including all 137k `encounters` rows, was identical.
+#:
+#: A controlled four-arm experiment isolated the cause to generation threading: two
+#: multi-threaded runs disagree, two single-threaded runs agree, and the two arms differ
+#: only in `payers`. The likely mechanism is lost updates on concurrent accumulation
+#: into the Payer object's float fields — the integer counters on the same rows never
+#: varied, and the multi-threaded values are never *higher* than the single-threaded
+#: ones — but that is a hypothesis consistent with the evidence, not something proven
+#: here. The decision rests on reproducibility, which is measured. See D29.
+#:
+#: Costs roughly 2x generation time. `make data` is rare and already downloads a 200MB
+#: jar, so this is not a meaningful price for a reproducibility claim.
+THREAD_POOL_SIZE: Final = 1
+
 # -- Tables ---------------------------------------------------------------------
 # The nine tables Gate 1a loads. Synthea exports more (observations, medications,
 # immunizations, devices, supplies, imaging_studies, allergies, careplans,

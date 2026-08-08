@@ -4,27 +4,38 @@
     {
       "name": "duplicate_encounters",
       "count": 220,
+      "unit": "encounter ids appearing more than once",
       "description": "inpatient encounter rows double-posted; count(*) overcounts"
     },
     {
       "name": "open_stays",
       "count": 140,
+      "unit": "encounters (distinct ids; duplicates excluded by construction)",
       "description": "inpatient encounters with NULL STOP (still admitted)"
     },
     {
       "name": "reversed_stays",
       "count": 35,
+      "unit": "encounters (distinct ids; duplicates excluded by construction)",
       "description": "encounters with STOP < START (invalid, excluded not clamped)"
+    },
+    {
+      "name": "payer_split",
+      "count": 1,
+      "unit": "payer entities split across two ids",
+      "description": "payer Medicare re-registered under a second Id with a case/whitespace name variant; GROUP BY NAME splits it"
     },
     {
       "name": "payer_casing",
       "count": 3,
-      "description": "payer names with uppercase + trailing whitespace; naive GROUP BY splits them"
+      "unit": "payer names mangled (no entity split)",
+      "description": "payer names with uppercase + trailing whitespace, on payers that are NOT split; distractors \u2014 normalising them changes no result"
     },
     {
       "name": "merged_organization",
       "count": 1,
-      "description": "organization Hospital 0 changed ID mid-2025; grouping by ID splits it"
+      "unit": "organizations split across two ids",
+      "description": "organization Fitchburg Outpatient Clinic changed ID mid-2025; grouping by ID splits it"
     }
   ]
 }
