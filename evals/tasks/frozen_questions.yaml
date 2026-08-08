@@ -1,0 +1,75 @@
+# Frozen seed-task questions — the exact text a task asks.
+#
+# FROZEN 2026-08-08, BEFORE any reference SQL was written and before any ground truth
+# was computed. That order is the entire point.
+#
+# gate-1a.md §2 step 7: "Reference SQL follows the question; the question must not
+# follow the answer." That rule is only checkable if the question was committed first.
+# By the time this file was written the messified numbers were already known — 145 vs
+# 133 for task 6, 33 vs 32 against 65 vs 25 for task 5, 18+15 vs 33 for task 4 — so
+# freezing the text now is what keeps a later edit honest: any change is a dated diff
+# against a recorded hash, not an absorbed edit.
+#
+# TO CHANGE A QUESTION: edit the text, recompute the sha256, and move `frozen_on`.
+# `tests/test_frozen_questions.py` fails until all three are done, so it cannot happen
+# quietly. **If the rewording is motivated by a number, the task YAML must say so** and
+# the original stands as the finding.
+#
+# These are questions ONLY. No SQL, no ground truth, no expected values — those are
+# step 7's, and are human-signed under D17.
+#
+# Written as an operations analyst would ask: natural language, no SQL vocabulary, and
+# no hint of the trap. A question that names its own trap measures nothing, because the
+# thing under test is whether the agent looks the definition up unprompted.
+
+frozen_on: 2026-08-08
+
+# AMENDMENTS — every change to a frozen question, with its motivation. The rule is not
+# "questions never change"; it is that a change is visible and justified.
+amendments:
+  - date: 2026-08-08
+    task: task5_payer_mix_2025
+    from: "What share of our inpatient encounters in 2025 was covered by each payer?"
+    to: "What was our payer mix for inpatient care in 2025?"
+    motivated_by: >-
+      A contradiction against evals/prompt_prohibitions.yaml, NOT by a number. The
+      prohibition list withholds `payer_mix_denominator` — encounters vs distinct
+      patients vs member-months — while the original question named the denominator
+      ("share of our inpatient encounters"), leaving nothing to look up. The two
+      artifacts disagreed, and the question was the one that was wrong.
+    numbers_unchanged: true
+questions:
+  - id: task1_org_inpatient_volume_2024
+    question: >-
+      Which organizations had the most inpatient encounters in 2024? Show me the organization name and city.
+    sha256: "00f9e6d2a1317f7138d61843b4595ced28d60ef832062f2bda7aaa1358e7db75"
+
+  - id: task2_admissions_2025
+    question: >-
+      How many admissions did we have in 2025?
+    sha256: "8aabccd57108a910ae2944e2e8d2647538cbdc39903e6e3a751d7d1fb67d9a66"
+
+  - id: task3_inpatient_los_distribution
+    question: >-
+      What does inpatient length of stay look like? I'd like the median, the 90th percentile, and the share of stays longer than a week.
+    sha256: "f141c875a2140198e847c1346184ed75eed728bc011ffdaee20e8c0854891733"
+
+  - id: task4_readmission_by_organization_2025
+    question: >-
+      What was our 30-day readmission rate for inpatient discharges in 2025, and how did it differ between our two busiest organizations?
+    sha256: "b1105dfe41cfd6787a72993d803554e682ad7ae63c3250277e430ecf608df7fe"
+
+  - id: task5_payer_mix_2025
+    question: >-
+      What was our payer mix for inpatient care in 2025?
+    sha256: "1971835dbee82ff0c1e18ba60949b9baec9fffffcfe969860e1302c74c8f939f"
+
+  - id: task6_inpatient_encounters_2023
+    question: >-
+      How many inpatient encounters started in 2023?
+    sha256: "bbe2ceb8a12709f03b43ca19404ab938f2a8298db8ec070ab2b4452008dc7ddf"
+
+  - id: task7_same_org_readmission_2025
+    question: >-
+      What was our readmission rate for inpatient discharges in 2025, counting only readmissions to the same organization?
+    sha256: "a5395f256ad740b6ec3acbab864ddbbda04ec943360c652939c6114ea9a2f181"

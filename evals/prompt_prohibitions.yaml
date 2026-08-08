@@ -1,0 +1,289 @@
+# What the prompts must not contain — written BEFORE any prompt was, deliberately.
+#
+# Every seed task measures whether the agent *looks something up* rather than whether it
+# already knew it. The prompt sits inside that gap, so anything written into a prompt to
+# help the agent succeed is a candidate leak (gate-1a.md §3, tenth instance). The
+# `open_stays` rule pasted into `config/agents.yaml` handed over task 2's secondary trap
+# before a single run, and read as careful prompt engineering while doing it.
+#
+# The prompt rewrite is the highest-risk item in step 5 for exactly that reason: a
+# good-faith attempt to make the SQL Analyst competent destroys tasks 2, 3, 5 and 6. So
+# this list exists first, and "is this a leak?" is a lookup against it rather than a
+# judgement call made at the moment of writing, by the person motivated to write it.
+#
+# SCOPE: every prompt in `config/agents.yaml`, both MCP prompts (`analyst/plan`,
+# `analyst/sql_style`), and every MCP **tool description** — the tool docstrings are
+# model-facing text and leak identically.
+#
+# WHAT IS NOT PROHIBITED: schema facts the agent could get from `describe_schema` /
+# `describe_table` at the cost of a step — table names, column names, declared types.
+# Naming them is a convenience, not a leak, because the value under measurement is the
+# *definition*, not the schema. Anything that resolves a definitional ambiguity IS a
+# leak, even when it is also true.
+
+tasks:
+  - task: task1_org_inpatient_volume_2024
+    measures: nothing definitional — the clean control
+    withheld: []
+    note: >-
+      No prohibition of its own. It exists as an uncontaminated floor for
+      trajectory_efficiency, which only means something if the other six are traps.
+
+  - task: task2_admissions_2025
+    measures: whether the agent looks up what counts as an admission
+    withheld:
+      - fact: which ENCOUNTERCLASS values count as an admission
+        entry: admission
+        why: >-
+          The whole trap. `encounters` mixes ten classes and only `inpatient` counts;
+          counting every row is wrong by more than an order of magnitude and requires no
+          SQL mistake at all. A prompt that lists the classes, or says which one to
+          filter on, converts this into a typing exercise.
+        forbidden:
+          - ambulatory
+          - wellness
+          - urgentcare
+          - outpatient
+          - hospice
+          - encounterclass = 'inpatient'
+          - "encounterclass in"
+      - fact: that still-admitted encounters (NULL STOP) still count
+        entry: open_stays
+        why: >-
+          Task 2's secondary trap, and the one that was already leaked. An analyst who
+          joins on discharge or filters `STOP IS NOT NULL` undercounts by 140.
+        forbidden:
+          - stop is not null
+          - stop is null
+          - still admitted
+          - still-admitted
+          - not been discharged
+          - do not filter
+
+  - task: task3_inpatient_los_distribution
+    measures: whether the agent looks up how length of stay is counted, and what to drop
+    withheld:
+      - fact: the LOS counting rule (midnights, same-day = 0, outlier truncation)
+        entry: length_of_stay
+        why: >-
+          Subtracting timestamps is the plausible-wrong answer and looks entirely
+          reasonable. Naming the unit resolves the ambiguity the task is built on.
+        forbidden:
+          - midnight
+          - date_diff
+          - datediff
+          - calendar day
+          - same-day discharge
+      - fact: that reversed stays (STOP < START) are invalid and excluded, not clamped
+        entry: reversed_stays
+        why: >-
+          35 encounters have negative durations that drag a mean down without erroring.
+          Telling the agent to exclude or repair them removes the data-quality half.
+        forbidden:
+          - stop < start
+          - stop >= start
+          - negative duration
+          - reversed
+          - invalid stay
+
+  - task: task4_readmission_by_organization_2025
+    measures: whether the agent looks up the readmission definition AND facility identity
+    withheld:
+      - fact: window anchoring, exclusions, and same- vs any-facility scope
+        entry: readmission_30day
+        why: >-
+          Anchoring on admission rather than discharge produces a lower rate, biased
+          non-uniformly, that looks entirely reasonable. Nothing in the output signals it.
+        forbidden:
+          - anchor
+          - index admission
+          - index stay
+          - 30 days after discharge
+          - planned readmission
+          - exclude death
+      # DEMOTED 2026-08-08 — `attributed_organization` is CONFIRMATORY for task 4, not
+      # load-bearing, and is therefore not withheld. The entry is correct and the
+      # ambiguity is real (which facility a cross-facility readmission counts against),
+      # but only 21 of 545 30-day pairs are cross-organization, and nothing in the
+      # agent's observable surface reveals that a choice was made: it attributes to the
+      # index facility, never learns there was an alternative, and no `head(5)` shows
+      # the 21. The decision is forced; the ambiguity is invisible.
+      #
+      # Both ways of forcing it were declined on stated grounds: reshaping task 4's
+      # question would breach a two-day-old freeze to make a trap work, and reshaping
+      # the data would be fitting the warehouse to a sentence. Withholding a fact the
+      # agent cannot discover measures nothing — it just fails the task.
+      - fact: that one organization changed id mid-2025 and must be unified by name
+        entry: organization_identity
+        why: >-
+          The naive "two busiest organizations" are the two halves of one hospital
+          (18 and 15) ahead of the genuine second (12). Mentioning that ids can change,
+          or suggesting grouping by name, hands over the entire finding.
+        forbidden:
+          - changed its id
+          - changed id
+          - "-old"
+          - same organization under two
+          - group by name instead
+
+  - task: task5_payer_mix_2025
+    measures: over-tooling restraint, plus whether the agent normalises what it sees
+    withheld:
+      - fact: the payer-mix denominator (encounters, not patients or member-months)
+        entry: payer_mix_denominator
+        why: Choosing the wrong denominator changes the answer materially.
+        forbidden:
+          - member-month
+          - member month
+          - distinct patients
+          - per encounter denominator
+      - fact: that payer names need trimming/upper-casing before grouping
+        entry: payer_name_normalisation
+        why: >-
+          The naive grouping splits Medicare into 'MEDICARE  ' (33) and 'Medicare' (32)
+          against a true 65 — a 19.2% vs 37.8% error on the headline share. Three
+          further mangled names are distractors that split nothing, so "which variation
+          matters?" is the question. Any instruction to normalise names answers it.
+        forbidden:
+          - trim(
+          - upper(
+          - lower(
+          - normalise the payer
+          - normalize the payer
+          - trailing whitespace
+          - inconsistent casing
+      - fact: that Python is unnecessary here
+        entry: null
+        why: >-
+          `forbidden_tools: [run_python]` measures restraint. A prompt telling the agent
+          to prefer SQL over the sandbox pre-empts the choice being measured.
+        forbidden:
+          - prefer sql over
+          - do not use run_python
+          - avoid the sandbox
+
+  - task: task6_inpatient_encounters_2023
+    measures: whether the agent notices a double-posted feed
+    withheld:
+      - fact: that encounters are counted distinctly by Id because the feed double-posts
+        entry: encounter_deduplication
+        why: >-
+          The premise is that nothing hints at it — the duplicates are byte-identical,
+          there is no primary key to object, and `count(*)` returns 145 against a true
+          133. This is the single most fragile trap in the set: one word in a prompt
+          ends it.
+        forbidden:
+          - count(distinct
+          - distinct id
+          - deduplicat
+          - de-duplicat
+          - duplicate row
+          - double-post
+          - the same encounter twice
+
+  - task: task7_same_org_readmission_2025
+    measures: distractor-sensitive retrieval — picking the right entry among near-misses
+    withheld:
+      - fact: which readmission entry applies when the question scopes to one facility
+        entry: readmission_30day_same_facility
+        why: >-
+          The corpus holds several topically near-identical readmission entries. The
+          task is decided by retrieval, not SQL, so naming the correct entry — or
+          describing what distinguishes them — removes the whole task.
+        forbidden:
+          - same-facility
+          - same facility only
+          - any-facility
+          - 90-day
+          - readmission_30day
+
+# Terms prohibited regardless of task: the doc_ids themselves. Naming an entry tells the
+# agent which one to fetch, which is the retrieval decision task 7 measures and a
+# shortcut everywhere else.
+global_forbidden_doc_ids: true
+
+# --- Tool error messages: IN SCOPE, with one rule ------------------------------------
+#
+# Verdict rather than an assumption, because the channel turned out to be real.
+#
+# PERMITTED — schema identifiers. `describe_table`'s rejection lists the allow-listed
+# tables; DuckDB's binder offers "Candidate bindings: REVENUE, NAME, ...". Both name
+# things `describe_schema` / `describe_table` return anyway, so they are a convenience,
+# not a leak, by the same line drawn at the top of this file.
+#
+# PROHIBITED — row values. Measured, not hypothesised:
+#
+#     SELECT CAST(NAME AS INTEGER) FROM payers
+#     -> Conversion Error: Could not convert string 'Medicare' to INT32
+#        when casting from source column NAME
+#
+# That is a data value in an error string, and it matters twice over. It is a read path
+# that returns data outside a `ResultRef`, which §4's critical rule exists to prevent —
+# every frame is supposed to travel as a reference. And a handful of deliberate casts
+# would enumerate `payers.NAME`, which is exactly where seed task 5's trap lives: an
+# agent that surfaced `'MEDICARE  '` this way would have the normalisation defect handed
+# to it by an error message rather than found in the data.
+#
+# ALSO PROHIBITED — internal paths. The same errors echo the artifact store's location
+# (`COPY (...) TO '/var/folders/...'`), disclosing the ResultRef mechanism and a
+# filesystem path for nothing.
+#
+# STATUS: `run_sql` currently passes DuckDB's message through verbatim
+# (`f"Query failed: {e}"`), so neither rule is enforced yet. Narrow in practice — it
+# needs a deliberate bad cast — but unbounded in principle, since the message content is
+# DuckDB's to choose and a future release could widen it. The fix is to sanitise at the
+# tool boundary: keep the error class and the identifier, drop quoted literals and
+# absolute paths. Small, and it belongs with the 5.3 prompt work rather than after it,
+# because both are about what model-facing text is allowed to contain.
+tool_error_messages:
+  in_scope: true
+  permitted: schema identifiers (table names, column names, candidate bindings)
+  prohibited: row values, internal filesystem paths
+  enforced: false  # run_sql passes DuckDB's text through unchanged; see above
+
+# --- OPEN DECISION: behavioural leakage -----------------------------------------------
+#
+# Recorded 2026-08-08, unresolved, for the 5.3 prompt review.
+#
+# This list withholds **facts**. It has no category for **behaviours**, and the draft
+# prompts are full of them: the SQL Analyst is told to query for a distribution rather
+# than assume one and that example rows are a sample rather than a summary; the Planner
+# is told not to assume the warehouse's shape and to plan for the specialist to inspect
+# it. None of that states a definition. All of it instructs the investigative behaviour
+# D28 named as the thing being observed — "whether the agent profiles before querying is
+# itself the behaviour the trajectory metrics exist to observe."
+#
+# Neither guard can see it. The denylist matches phrases and there is no phrase; the
+# retrieval guard asks whether a text carries a definition's topic, and an instruction
+# to go and look carries no definition at all.
+#
+# THE TRADE-OFF, both directions:
+#
+#   For including it. Some competence instruction is unavoidable. A prompt that says
+#   nothing about how to work measures the base model's habits rather than the system
+#   we built, and the eval's subject is the system. D20's single-agent baseline receives
+#   the *same* prompts, so the multi-agent-vs-baseline comparison is unaffected either
+#   way — whatever competence is instructed is instructed identically in both arms, and
+#   that comparison is the headline claim.
+#
+#   Against. It bounds what any per-task result can be said to show. With these prompts,
+#   "the agent investigated the schema unprompted" is **false** — it was prompted. So is
+#   "the agent knew not to trust a five-row sample". `trajectory_efficiency` on task 1
+#   still measures step count honestly, but the *disposition* producing those steps came
+#   from us. Any 1c claim of the form "the agent chose to X" has to become "the agent
+#   was instructed to X and did so", which is a materially weaker and much less
+#   interesting sentence.
+#
+# WHAT IS NOT IN DOUBT: this is not the tenth instance. No task's answer is given away,
+# and every definitional trap survives intact — an agent told to inspect the schema
+# still has to look up what an admission is. The question is what the results license
+# us to say, not whether the traps work.
+#
+# TO DECIDE AT THE 5.3 REVIEW: which behaviours are instructed, and — whichever way it
+# goes — the sentence README and 1c may use about them. Deciding by writing the prompts
+# and inferring the claim afterwards is the failure this file exists to prevent.
+behavioural_instruction:
+  status: open
+  blocks: 5.3 prompt review
+  affects: 1c claim wording, README phrasing
+  not_at_issue: definitional traps (unaffected), D20 baseline comparison (same prompts)
