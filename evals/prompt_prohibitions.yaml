@@ -279,11 +279,73 @@ tool_error_messages:
 # still has to look up what an admission is. The question is what the results license
 # us to say, not whether the traps work.
 #
-# TO DECIDE AT THE 5.3 REVIEW: which behaviours are instructed, and — whichever way it
-# goes — the sentence README and 1c may use about them. Deciding by writing the prompts
-# and inferring the claim afterwards is the failure this file exists to prevent.
+# RESOLVED 2026-08-08 at the 5.3 review, BEFORE any prompt was written. The claim
+# sentence below is fixed now, while no results exist to be flattered by it — which is
+# the whole reason this decision was blocked rather than deferred.
+#
+# DECISION: interface facts only.
+#
+#   INSTRUCTED — what a tool returns and what it does not, and what the system requires
+#   of an answer. `describe_table` reports shape rather than statistics; example rows
+#   are a fixed handful, not a summary; results travel as references, not frames; every
+#   claim carries provenance; assumptions are reported rather than dropped. These are
+#   the tool contract and the output contract. Withholding them does not make the agent
+#   more investigative, it makes it wrong about the interface — the agent would fail on
+#   the mechanics of the system rather than on the reasoning under test.
+#
+#   NOT INSTRUCTED — investigative disposition. No prompt and no tool description tells
+#   the agent to inspect the schema before querying, to profile a column rather than
+#   assume its contents, to distrust a small sample, or to consult the metrics
+#   dictionary before writing SQL. D28 named exactly this as the thing being observed:
+#   "whether the agent profiles before querying is itself the behaviour the trajectory
+#   metrics exist to observe." An instruction to do it converts the observation into a
+#   compliance check.
+#
+# THE SENTENCE. This is the only wording the README and 1c may use about investigative
+# behaviour, and it is quoted rather than paraphrased:
+#
+#   "Schema inspection, sampling caution, and dictionary lookup are not instructed in
+#    any prompt or tool description; where the agent does them, the trajectory records
+#    a choice, not compliance."
+#
+# WHAT IT COSTS, stated because it will show up in the numbers: some runs will be worse
+# than they would have been under a prompt that told the agent how to work. That is the
+# measurement, not a regression — a lower `task_success` under uninstructed behaviour is
+# a finding about the agent, where a higher one under instructed behaviour would have
+# been a finding about us.
+#
+# WHAT IS UNAFFECTED, and was never in doubt: every definitional trap survives intact —
+# an agent that decides on its own to inspect the schema still has to look up what an
+# admission is. D20's single-agent baseline receives identical prompts either way, so
+# the multi-agent-vs-baseline comparison, which is the headline claim, does not move.
+#
+# UPGRADE PATH, recorded so it is a decision and not an oversight: ship the dispositional
+# instruction as a named, versioned `instruction_set` carried in the run record, and
+# sweep both arms in 1c. That is strictly more informative than either single choice and
+# it is what this decision leaves available — choosing "instructed" today would have
+# baked it in, and removing it later would invalidate every run recorded under it.
+# TRIGGER: 1c has slack after the baseline arm lands. Not before — it adds a sweep
+# dimension that is not in gate-1a.md §2 or in 1c's scope, and "stop at the current gate
+# boundary" cuts against building it early.
 behavioural_instruction:
-  status: open
-  blocks: 5.3 prompt review
+  status: resolved
+  resolved_on: 2026-08-08
+  decision: interface facts only
+  instructed: tool contracts (what a tool returns and withholds), output contracts
+    (provenance, exact numbers, carried-forward assumptions, scope boundary)
+  not_instructed: schema inspection, column profiling, sampling caution, dictionary
+    lookup before writing SQL
+  claim_sentence: >-
+    Schema inspection, sampling caution, and dictionary lookup are not instructed in any
+    prompt or tool description; where the agent does them, the trajectory records a
+    choice, not compliance.
   affects: 1c claim wording, README phrasing
   not_at_issue: definitional traps (unaffected), D20 baseline comparison (same prompts)
+  # Neither automated guard can see this category — see the paragraph above. Recorded as
+  # `review` rather than left blank, because an unstated enforcement status reads as
+  # enforced, and a rule believed to be checked is worse than one known not to be
+  # (gate-1a.md §3, thirteenth instance).
+  enforced: review
+  upgrade_path:
+    what: instruction_set as a named variable in the run record, both arms swept in 1c
+    trigger: 1c has slack after the baseline arm lands
