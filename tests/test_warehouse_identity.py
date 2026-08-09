@@ -172,6 +172,9 @@ class TestStalenessVerdict:
         """
         version_file = tmp_path / "warehouse_version.txt"
         monkeypatch.setattr(m, "warehouse_version_path", lambda: version_file)
+        # Hold the corpus axis still: this test isolates the WAREHOUSE one, and
+        # staleness_note now compares all three.
+        monkeypatch.setattr(m, "current_corpus_version", lambda: "cafe1234")
 
         version_file.write_text(_version(synthea_warehouse) + "\n")
         m.write_manifest(

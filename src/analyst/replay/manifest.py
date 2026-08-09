@@ -15,6 +15,15 @@ Both sides are committed, so the check works on a clean clone with no warehouse:
 `data/warehouse_version.txt` is written by `make data` and committed;
 `cassettes/manifest.json` is written by a RECORD run and committed. An absent manifest
 means the cassettes predate this mechanism — which is exactly the fixture era.
+
+**This identity is not complete, and must not be read as though it were.** The LLM
+cassette key hashes the whole request: the system prompt, the JSON schema of the
+structured response, the model id and the effort setting. `prompts_version` covers the
+first of those (see `prompt_identity`, added at 5.3 after a prompt rewrite produced a
+`CassetteMissError` where this module was built to produce `STALE`). The rest are still
+uncovered, so a model or schema change invalidates every cassette while this manifest
+compares equal. **If that ever surfaces as a crash where staleness was expected, it is
+the same finding on a different input** — extend the identity, do not patch the symptom.
 """
 
 from __future__ import annotations
@@ -24,10 +33,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from analyst.contracts import Contract
-from analyst.replay import store
+from analyst.replay import prompt_identity, store
 
 #: Marker used when the cassettes predate the manifest entirely.
 FIXTURE_ERA = "fixture-era"
+
+#: Marker for a manifest written before `prompts_version` existed. Defaulted rather than
+#: required so an older committed manifest still loads — and it compares unequal to any
+#: real hash, so those cassettes correctly read as stale rather than as current.
+PROMPTS_UNRECORDED = "prompts-unrecorded"
 
 
 class CassetteManifest(Contract):
@@ -37,6 +51,7 @@ class CassetteManifest(Contract):
     corpus_version: str
     recorded_at: str
     git_sha: str = "unknown"
+    prompts_version: str = PROMPTS_UNRECORDED
 
 
 def _repo_root() -> Path:
@@ -85,6 +100,27 @@ def read_manifest() -> CassetteManifest | None:
     return CassetteManifest.model_validate_json(path.read_text())
 
 
+def corpus_dir() -> Path:
+    return _repo_root() / "data" / "metrics_dictionary"
+
+
+def current_corpus_version() -> str:
+    """Identity of the metrics dictionary committed in the repo.
+
+    Hashed from the committed Markdown, not from the built index, so this works on a
+    clean clone with no `[rag]` extra and no `make index` — the same property that lets
+    `corpus_version` key the retrieval cassettes at all (D26).
+    """
+    from analyst.retrieval.corpus import corpus_version
+
+    return corpus_version(corpus_dir())
+
+
+def current_prompts_version() -> str:
+    """Identity of the model-facing text committed in the repo."""
+    return prompt_identity.prompts_version()
+
+
 def write_manifest(warehouse_version: str, corpus_version: str, git_sha: str) -> Path:
     path = manifest_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -93,6 +129,10 @@ def write_manifest(warehouse_version: str, corpus_version: str, git_sha: str) ->
         corpus_version=corpus_version,
         recorded_at=datetime.now(UTC).isoformat(timespec="seconds"),
         git_sha=git_sha,
+        # Read here rather than passed in: the caller records against whatever prompts
+        # the run actually used, which is whatever is committed. A parameter would let
+        # a caller record an identity that did not produce the cassettes.
+        prompts_version=current_prompts_version(),
     )
     path.write_text(json.dumps(manifest.model_dump(), indent=2, sort_keys=True) + "\n")
     return path
@@ -115,5 +155,26 @@ def staleness_note() -> str | None:
         return (
             f"cassettes were recorded against warehouse {manifest.warehouse_version}, "
             f"but the committed warehouse is now {current}"
+        )
+    prompts = current_prompts_version()
+    if manifest.prompts_version != prompts:
+        return (
+            f"cassettes were recorded against prompts {manifest.prompts_version}, but "
+            f"the committed prompts are now {prompts} — the prompt is part of the LLM "
+            "cassette key, so every LLM cassette is superseded"
+        )
+    # Checked last, and checked at all only from 5.3: `corpus_version` was recorded in
+    # the manifest from the beginning and never compared, so D26's entire purpose — a
+    # corpus edit invalidating the retrieval cassettes — was enforced at the cassette
+    # key and unenforced at the staleness layer. The corpus moved twice in one session
+    # while this field sat decorative. Two of three fields compared is worse than one,
+    # because the struct looks complete.
+    corpus = current_corpus_version()
+    if manifest.corpus_version != corpus:
+        return (
+            f"cassettes were recorded against corpus {manifest.corpus_version}, but "
+            f"the committed metrics dictionary is now {corpus} — corpus_version is "
+            "part of the retrieval cassette key, so every retrieval cassette is "
+            "superseded"
         )
     return None

@@ -66,6 +66,26 @@ class CassetteStore:
         self.mode = mode
         self._root = root or cassettes_root()
 
+    def _why_the_key_may_have_moved(self) -> str:
+        """Attach the staleness reason to a miss, so the traceback explains itself.
+
+        A cassette miss and a superseded cassette look identical from here — the key
+        matches nothing either way — but they are different conditions with different
+        fixes, and only one of them is anybody's mistake. `staleness_note()` already
+        knows which, and until 5.3 nothing asked it: `evals.runner` consults it *after*
+        the run, so a miss crashed the run before the explanation was ever computed.
+
+        Deliberately best-effort. This runs inside an error path, and a staleness check
+        that itself raised would replace a legible failure with an illegible one.
+        """
+        try:
+            from analyst.replay import manifest
+
+            note = manifest.staleness_note()
+        except Exception:  # pragma: no cover - never let diagnostics break a diagnostic
+            return ""
+        return f"These cassettes are stale: {note}.\n" if note else ""
+
     def path_for(self, seam: Seam, key: str) -> Path:
         return self._root / seam / f"{key}.json"
 
@@ -89,6 +109,7 @@ class CassetteStore:
             raise CassetteMissError(
                 f"No {seam} cassette for key {key[:16]}… at {path}.\n"
                 f"Request preview: {preview[: self.PREVIEW_CHARS]}\n"
+                f"{self._why_the_key_may_have_moved()}"
                 "REPLAY never falls through to a live call. Re-record with "
                 "`make demo MODE=record` (needs ANTHROPIC_API_KEY), then commit "
                 "the new cassette."

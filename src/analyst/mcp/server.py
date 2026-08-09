@@ -117,12 +117,7 @@ def _register_retrieval(server: MCPServer, rag_config: Path) -> None:
 
     @server.tool(name="search_metric_definitions")
     def search_metric_definitions(query: str, k: int = 5) -> SearchResult:
-        """Look up how an operational metric is defined in the metrics dictionary.
-
-        Use this BEFORE writing SQL for any metric whose definition could reasonably
-        be read more than one way — readmission windows, length of stay, what counts
-        as an admission, payer-mix denominators. The dictionary is authoritative; a
-        plausible reading that contradicts it is wrong.
+        """Retrieve definition passages from the metrics dictionary.
 
         Returns scored passages with their `doc_id`, to be read and cited. It does not
         summarise or interpret them.

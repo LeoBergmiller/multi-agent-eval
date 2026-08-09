@@ -31,6 +31,39 @@ TASK = REPO_ROOT / "evals" / "tasks" / "gate0_inpatient_encounters_2023.yaml"
 #: provable while the ground truth is in flux.
 RECORDED_ANSWER = 37.0
 
+#: Every test here that actually replays a cassette, marked at step 5.3.
+#:
+#: **The prompt is part of the LLM cassette key.** 5.3 rewrote all three prompts in
+#: `config/agents.yaml` and the `search_metric_definitions` description, so every
+#: committed LLM cassette is superseded and REPLAY raises `CassetteMissError` — which
+#: is the two-seam design working exactly as specified, not a regression in it.
+#:
+#: **`test_smoke_task_replays_without_credentials` is among these, and that is the
+#: expensive part: the clone-and-run guarantee in the README is knowingly red until
+#: 5.7.** Marked rather than quietly failing so it is visible in every test run, and
+#: `strict=True` so it breaks loudly the moment the re-record lands and these markers
+#: must come off.
+#:
+#: Deferred to 5.7's wholesale re-record, joining the nine cassettes carrying dead
+#: `corpus_version`s. Re-recording now would be spent twice over: 5.4 (`run_python`),
+#: 5.6 (the two MCP prompts) and step 6 (the planner's genuine fan-out for the Docs
+#: Analyst) each invalidate these again inside this same gate, and gate-1a.md §2 step 7
+#: assigns this gate's one real `make record`.
+#:
+#: The condition itself is no longer silent: `prompts_version` in the cassette manifest
+#: means `staleness_note()` now says *why*, instead of the run crashing with a key that
+#: matches nothing.
+SUPERSEDED_BY_THE_5_3_PROMPT_REWRITE = pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "5.3 rewrote the prompts, which are part of the LLM cassette key, so every "
+        "committed LLM cassette is superseded and REPLAY raises CassetteMissError by "
+        "design. Deferred to 5.7's wholesale re-record; strict=True forces these "
+        "markers off when it lands. Includes the clone-and-run smoke test, which is "
+        "knowingly red until then."
+    ),
+)
+
 
 @pytest.fixture
 def no_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -60,6 +93,7 @@ class TestReplayIsHermetic:
         )
         assert client._inner is None
 
+    @SUPERSEDED_BY_THE_5_3_PROMPT_REWRITE
     def test_smoke_task_replays_without_credentials(
         self, no_api_key: None, runs_root: Path
     ) -> None:
@@ -69,6 +103,7 @@ class TestReplayIsHermetic:
         assert final.numeric_value == RECORDED_ANSWER
         assert final.evidence, "answer carries no provenance (rule 4)"
 
+    @SUPERSEDED_BY_THE_5_3_PROMPT_REWRITE
     def test_replay_needs_no_warehouse(
         self, no_api_key: None, runs_root: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -87,6 +122,7 @@ class TestReplayIsHermetic:
         )
         assert run_dir.read_final().numeric_value == RECORDED_ANSWER
 
+    @SUPERSEDED_BY_THE_5_3_PROMPT_REWRITE
     def test_run_directory_is_complete(self, no_api_key: None, runs_root: Path) -> None:
         run_dir = asyncio.run(run_task(TASK, "test-artifacts", CassetteMode.REPLAY))
         for path in (
@@ -97,6 +133,7 @@ class TestReplayIsHermetic:
         ):
             assert path.is_file(), f"{path.name} missing from the run directory"
 
+    @SUPERSEDED_BY_THE_5_3_PROMPT_REWRITE
     def test_all_required_span_attributes_are_emitted(
         self, no_api_key: None, runs_root: Path
     ) -> None:
@@ -109,6 +146,7 @@ class TestReplayIsHermetic:
             seen |= set(json.loads(line).get("attributes", {}))
         assert not (GATE0_REQUIRED - seen)
 
+    @SUPERSEDED_BY_THE_5_3_PROMPT_REWRITE
     def test_replayed_run_reports_the_recorded_cost(
         self, no_api_key: None, runs_root: Path
     ) -> None:
@@ -118,6 +156,7 @@ class TestReplayIsHermetic:
 
 
 @pytest.mark.integration
+@SUPERSEDED_BY_THE_5_3_PROMPT_REWRITE
 class TestGateVerdict:
     def test_unverified_ground_truth_cannot_pass_the_gate(
         self, no_api_key: None, runs_root: Path

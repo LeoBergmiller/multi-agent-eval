@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from analyst.replay import manifest as m
+from analyst.replay import prompt_identity
 from evals.report import FAIL, PASS, STALE, verdict
 from evals.runner import EvalReport
 
@@ -87,6 +88,7 @@ class TestStalenessDetection:
     ) -> None:
         monkeypatch.setattr(m, "manifest_path", lambda: tmp_path / "manifest.json")
         monkeypatch.setattr(m, "current_warehouse_version", lambda: "synthea-v4")
+        monkeypatch.setattr(m, "current_corpus_version", lambda: "corpus-1")
         m.write_manifest("synthea-v4", "corpus-1", "sha")
 
         assert m.staleness_note() is None
@@ -108,6 +110,116 @@ class TestStalenessDetection:
 
         assert note is not None
         assert "s1" in note and "s2" in note
+
+    def test_a_prompt_edit_alone_flips_the_verdict(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """End to end through the real staleness path, mirroring the messify test.
+
+        Records a manifest, confirms the verdict is clean, then changes **one prompt**
+        — nothing else, no warehouse change, no corpus change — and confirms the
+        verdict flips.
+
+        Before `prompts_version` this assertion failed. The prompt is part of the LLM
+        cassette key, so the edit invalidated every LLM cassette; `staleness_note()`
+        returned `None` and `make demo` raised `CassetteMissError` instead of reporting
+        the STALE state this whole module exists to report. Without this test the field
+        would be a value nothing exercises, which is the shape of the defect it fixes.
+        """
+        agents = tmp_path / "agents.yaml"
+        agents.write_text(
+            "roles:\n  planner:\n    prompt: |\n      You are the Planner.\n"
+        )
+        monkeypatch.setattr(prompt_identity, "agents_config_path", lambda: agents)
+        monkeypatch.setattr(m, "manifest_path", lambda: tmp_path / "manifest.json")
+        monkeypatch.setattr(m, "current_warehouse_version", lambda: "synthea-v4")
+        monkeypatch.setattr(m, "current_corpus_version", lambda: "corpus-1")
+
+        m.write_manifest("synthea-v4", "corpus-1", "sha")
+        assert m.staleness_note() is None, "a freshly recorded manifest is not stale"
+
+        agents.write_text(
+            "roles:\n  planner:\n    prompt: |\n      You are the Planner. Be brief.\n"
+        )
+
+        note = m.staleness_note()
+        assert note is not None, (
+            "a prompt was rewritten and the staleness check did not notice — the "
+            "prompt is part of the LLM cassette key, so every cassette is superseded "
+            "and a replayed run would hard-fail with no explanation of why"
+        )
+        assert "prompts" in note
+
+    def test_a_corpus_edit_alone_flips_the_verdict(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The third field of the same struct, finally compared.
+
+        `corpus_version` was recorded in the manifest from the start and never checked
+        against the committed corpus, so D26's whole purpose — a definition edit
+        invalidating the retrieval cassettes it was made to correct — held at the
+        cassette key and not at the staleness layer. The corpus moved twice in one
+        session with this field decorative.
+
+        Two of three fields compared is worse than one, because the struct reads as
+        complete.
+        """
+        corpus = tmp_path / "corpus"
+        corpus.mkdir()
+        (corpus / "admission.md").write_text(
+            "An admission is an inpatient encounter.\n"
+        )
+        monkeypatch.setattr(m, "corpus_dir", lambda: corpus)
+        monkeypatch.setattr(m, "manifest_path", lambda: tmp_path / "manifest.json")
+        monkeypatch.setattr(m, "current_warehouse_version", lambda: "synthea-v4")
+
+        m.write_manifest("synthea-v4", m.current_corpus_version(), "sha")
+        assert m.staleness_note() is None, "a freshly recorded manifest is not stale"
+
+        (corpus / "admission.md").write_text(
+            "An admission is an inpatient encounter, excluding observation.\n"
+        )
+
+        note = m.staleness_note()
+        assert note is not None, (
+            "a definition was edited and the staleness check did not notice — the "
+            "retrieval cassettes are keyed on corpus_version, so they now replay "
+            "passages that no longer exist in the repo"
+        )
+        assert "corpus" in note
+
+    def test_a_comment_edit_does_not_flip_the_verdict(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The other half: the identity is over content, not over the file.
+
+        `config/agents.yaml` carries budgets, tool allow-lists and a long header
+        comment, none of which reaches the cassette key. Hashing the file would report
+        STALE against valid cassettes on a reworded comment, and a check that cries
+        wolf is one nobody reads.
+        """
+        agents = tmp_path / "agents.yaml"
+        agents.write_text(
+            "# a header comment\nroles:\n  planner:\n    max_usd: 0.20\n"
+            "    prompt: |\n      You are the Planner.\n"
+        )
+        monkeypatch.setattr(prompt_identity, "agents_config_path", lambda: agents)
+        monkeypatch.setattr(m, "manifest_path", lambda: tmp_path / "manifest.json")
+        monkeypatch.setattr(m, "current_warehouse_version", lambda: "synthea-v4")
+        monkeypatch.setattr(m, "current_corpus_version", lambda: "corpus-1")
+
+        m.write_manifest("synthea-v4", "corpus-1", "sha")
+
+        agents.write_text(
+            "# a completely rewritten header comment, several words longer\n"
+            "roles:\n  planner:\n    max_usd: 0.50\n"
+            "    prompt: |\n      You are the Planner.\n"
+        )
+
+        assert m.staleness_note() is None, (
+            "a comment and a budget changed but no model-facing text did, so the "
+            "cassettes are still valid and the verdict must stay clean"
+        )
 
     def test_committed_warehouse_version_is_present(self) -> None:
         """`data/warehouse_version.txt` is committed even though the warehouse is not.
