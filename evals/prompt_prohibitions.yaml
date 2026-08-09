@@ -228,18 +228,39 @@ global_forbidden_doc_ids: true
 # (`COPY (...) TO '/var/folders/...'`), disclosing the ResultRef mechanism and a
 # filesystem path for nothing.
 #
-# STATUS: `run_sql` currently passes DuckDB's message through verbatim
-# (`f"Query failed: {e}"`), so neither rule is enforced yet. Narrow in practice — it
-# needs a deliberate bad cast — but unbounded in principle, since the message content is
-# DuckDB's to choose and a future release could widen it. The fix is to sanitise at the
-# tool boundary: keep the error class and the identifier, drop quoted literals and
-# absolute paths. Small, and it belongs with the 5.3 prompt work rather than after it,
-# because both are about what model-facing text is allowed to contain.
+# STATUS: enforced from 5.3. `SqlRunner` no longer passes DuckDB's text through; it
+# **rebuilds** the message from the error category plus tokens that match a real schema
+# identifier, and keeps nothing else.
+#
+# The plan above said "drop quoted literals and absolute paths", and that plan was wrong
+# — measurement against DuckDB 1.5.5 changed it. The same value from the same column
+# leaks in three shapes:
+#
+#     Conversion Error: Could not convert string 'MEDICARE  ' to INT32 ...
+#     Conversion Error: invalid date field format: "MEDICARE  ", expected ...
+#     Invalid Input Error: Could not parse string "MEDICARE  " according to ...
+#     MEDICARE
+#     ^
+#
+# Single-quoted, double-quoted, and **bare on its own line under a caret**. A deny-list
+# that strips quoted literals passes its own unit test and leaks the third — and would
+# also destroy `Candidate bindings: "Id"`, which this file explicitly permits. So the
+# rule is an ALLOW-LIST: nothing of the vendor's free text survives, which holds whatever
+# a future DuckDB release decides to put in a message.
+#
+# Residual, stated rather than hidden: a row value spelled exactly like a table or column
+# name survives — as an identifier, which is the permitted category. No such collision
+# exists in this warehouse.
+#
+# Enforced by `tests/test_sql_error_sanitisation.py`, which asserts the OUTCOME: it
+# issues deliberate bad casts against `payers.NAME`, reads that column's real values back
+# out of the warehouse, and checks the returned error for them — rather than asserting
+# that a sanitiser ran.
 tool_error_messages:
   in_scope: true
   permitted: schema identifiers (table names, column names, candidate bindings)
   prohibited: row values, internal filesystem paths
-  enforced: false  # run_sql passes DuckDB's text through unchanged; see above
+  enforced: true  # tests/test_sql_error_sanitisation.py, outcome-shaped
 
 # --- OPEN DECISION: behavioural leakage -----------------------------------------------
 #
