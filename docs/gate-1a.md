@@ -512,3 +512,36 @@ Steps 2 and 3 produced three separate silent-failure findings in a single sessio
 **The third one was inside the guard written to catch the pattern.** `manifest.py` exists specifically to make a stale-data condition legible rather than silent — and its own path resolution leaked into the committed cassettes, whose only symptom was a different wrong verdict. The first fix then reintroduced the same failure through the import style. Vigilance, applied by someone actively thinking about this exact class of bug, while writing the thing whose purpose is that class of bug, did not prevent it.
 
 That is the honest lesson and it should not be softened into "be careful." **Care does not eliminate this class; asserting outcomes does.** Every one of the three was caught by an assertion about a result — `max(START)` against the pinned boundary, injected counts re-read from the warehouse, the verdict a clean clone actually prints — and none by inspection, review, or intent. The corollary for the rest of Gate 1: when adding a capability, the question is not "is this right?" but "what result would be different if it were wrong, and is anything checking that result?" The stubbed path proves wiring; the real one proves the contract. Same argument as the standing one-real-`make record`-per-gate rule, arriving from a different direction.
+
+---
+
+## 8. Working protocol — where a decision has to land
+
+Added 2026-08-10, after four instances traced to one cause: **the advisory conversation
+has been acting as a second, unversioned source of truth, and it is the one both parties
+reach for first.** §3 records the cause; this is the part that is procedural rather than
+checkable.
+
+`tests/test_spec_matches_code.py` covers exactly one of the four — an MCP primitive named
+in architecture.md §4 must be built, scoped out with a trigger, or scheduled. The other
+three had no structured home to check against: a substep decomposition, an exit criterion
+read as a standing property, and a demotion applied to one artifact and not its
+counterpart. Nothing can assert those, so the rule is a habit with a deadline instead.
+
+**The rule.** Any decision adjudicated in the advisory conversation that changes the
+project's shape — what gets built, what gets scoped out, what a threshold is, what a claim
+may say, what order steps run in — is written into `decisions.md` or `docs/gate-1a.md`
+**in the next commit, not the next convenient one.**
+
+"Next commit" is the whole rule. Deferring to a natural moment is how all four happened;
+none was ever refused, each was simply not yet convenient, and the gap closed over them.
+
+**It is two-sided, and that half matters more than it looks.** The advisor carries it too:
+when approving a decision, name where it lands. "Approved — record it in the not-built
+table with its trigger" costs four words and removes the step where someone has to *decide
+whether* it is worth recording. Every one of the four failures happened at that step, not
+at the writing.
+
+**How to tell this rule is being followed:** a decision made in conversation appears in a
+diff. If a session ends and the only trace of a decision is that both parties remember it,
+the rule was not followed, whatever anyone intended.
