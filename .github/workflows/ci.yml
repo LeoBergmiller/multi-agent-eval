@@ -42,8 +42,19 @@ jobs:
           uv run ruff format --check .
           uv run mypy
 
-      - name: Build fixture warehouse
-        run: uv run python data/load_fixtures.py
-
+      # No warehouse build step. `data/load_fixtures.py` was deleted with
+      # `data/fixtures/` in bd1d552 (Gate 1a step 2) and this step invoking it was
+      # left behind, so every run from 2026-08-06 exited 2 *before* pytest for four
+      # days — a red badge that meant "the suite did not run", which is a different
+      # state from "a test failed" and indistinguishable from it at a glance.
+      #
+      # Nothing replaces it: `tests/conftest.py` synthesises every warehouse it needs
+      # in-process from `data/synthea_spec.py` (ee67b47), and the tests that want the
+      # real `data/warehouse.duckdb` skip when it is absent. Verified against a clean
+      # clone with no warehouse, no index and no `[rag]` extra: 214 passed, 45 skipped,
+      # 7 xfailed, nothing errored.
+      #
+      # `tests/test_workflow_paths.py` now asserts that every path named in this file
+      # exists, so a refactor cannot delete a script and leave the step calling it.
       - name: Test
         run: uv run pytest

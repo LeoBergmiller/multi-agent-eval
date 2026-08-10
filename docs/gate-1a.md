@@ -325,6 +325,16 @@ Planner must now emit plans with genuine fan-out: a `Plan` DAG where the docs lo
 
   **Forward form, and it is a claim-shaped rule rather than a code-shaped one:** when a fix is described by an outcome — *"then X reports Y"* — run the thing and read Y. The distance between "the field is correct" and "the demo now explains itself" is one command, and it is the only place the difference shows.
 
+- **The check that covered the one thing local runs cannot — and it reported into a void for four days.** `data/load_fixtures.py` was deleted in `bd1d552` with `data/fixtures/`; `.github/workflows/ci.yml` kept the step that ran it. Every run from 2026-08-06 exited 2 at `Build fixture warehouse`, **before pytest**, across 28 commits. Lint, format and mypy passed on every one of them, which is what made the shape of the failure so easy to skim past.
+
+  **The defect is a one-line workflow edit. The process failure is the entire finding.** Everything added in those four days — `warehouse_identity`, the committed-artifact guard, `prompt_identity`, `test_describe_contract`, `test_injection_independence`, `test_ground_truth`, `test_frozen_questions`, `test_prompt_contamination`, `test_sql_error_sanitisation` — had never once executed on a clean clone. Every green result in that window was local-only, and **local green is the exact evidence CI exists to not be** (the fifth instance: a green local run is evidence about *local*). The one check covering the clean-clone environment was down, and its being down was invisible precisely because the local signal stayed strong.
+
+  **A red badge cannot distinguish "a test failed" from "the suite did not run", and they are different states.** The first is a defect with a location; the second is an absence of information dressed as one. Because the break was *upstream* of pytest, no test could report it — the mechanism that would normally say what is wrong was never reached. A failure in the reporting layer looks exactly like a failure in the reported thing, which is the eighth instance's "different wrong verdict" arriving at the level of the build rather than the run.
+
+  **Guarded structurally** by `tests/test_workflow_paths.py`, which parses `.github/workflows/*.yml` and asserts every path they name exists. Static, so it needs no runner — making the detection of a broken workflow depend on the CI that workflow breaks is circular. It is parsed as YAML rather than scanned as text so comments are dropped, and because the fixed `ci.yml` names no paths at all, the extractor is separately proven against the verbatim broken step: `test_the_original_defect_is_caught` fails if it ever stops seeing `data/load_fixtures.py`. Mutation-checked by reinstating the real dead step and confirming the guard goes red.
+
+  **The portfolio-specific trap, recorded because it is the expensive part.** `docs/gate-0.md` records green hermetic CI as an achieved exit criterion and the README's clone-and-run claim rests on it, so the repo asserted in its own documentation a property that had not held for four days — to a reader, and to an interviewer clicking the badge. Corrected in `gate-0.md` under the thirteenth instance's rule, with the forward rule stated there: **a gate's exit criteria are properties, not events.** "CI is green" was true when the gate closed and stopped being true four commits later with nothing watching, because a retrospective written in the present tense converts a thing that *happened* into a thing that *holds*. Every present-tense criterion needs a continuous check or an explicit re-verification at the next boundary; Gate 1a's checklist now carries one.
+
 - **Replay covers the cassetted result, not the artifact behind the ref.** A replayed run's `results/` is empty by design: the recorded artifact is the `ResultRef`, not the frame it points at, and recording the frame would be a third seam. So any new path that *resolves* a ref to its file is invisible to the hermetic gate — it passes CI and fails only live. **Every new ref-consuming path needs a RECORD-mode test.** First one due with seed task 3 (`run_sql → run_python`), which is the first consumer of the frame behind a ref.
 - **No global state.** The tracer is threaded through `RunContext`. Nothing new sets a process-global.
 - **`extra="forbid"` on every contract.** It caught a partial `TaskFile` model at Gate 0.
@@ -359,7 +369,20 @@ Quant Analyst · Validator node · replan edge · failure injection · the seven
 - [ ] Docs Analyst node; Planner emits genuine fan-out
 - [ ] 7 seed tasks, all `status: verified` with recorded method
 - [ ] **Exit criterion met:** a question requiring both SQL and a docs lookup answers correctly, and skipping the lookup demonstrably produces a wrong number
-- [ ] `make lint` green, tests green, `make demo` runs keyless from cassettes
+- [ ] `make lint` green, `make demo` runs keyless from cassettes
+- [ ] **CI green on the hermetic subset, re-verified rather than inherited** — the workflow ran *the suite*, not just lint, on the latest `main`, confirmed by reading the run's Test step output rather than the badge. Gate 0 recorded green CI as achieved and it silently stopped holding four commits later; an exit criterion in the present tense is a property, not an event (see `docs/gate-0.md`'s 2026-08-10 correction).
+- [ ] **The non-hermetic half exercised locally, with counts recorded in the retrospective.** CI covers roughly 83% of the suite; the rest cannot run on a runner and is listed below. Run `make data` and the full suite locally, and record the pass/skip counts and the date — so "the non-hermetic half was exercised" is a dated fact rather than an assumption.
+
+**What CI does and does not cover — stated because "tests green" hid it.** Measured against a clean clone at `3b3d5a2`: **220 passed, 45 skipped, 7 xfailed**, against 263 passed / 2 skipped locally. The 43-test difference splits into two groups with different standing:
+
+| gated on | count | standing |
+|---|---|---|
+| the `[rag]` extra + a built index | ~28 | **Known boundary, no action.** CI-skipping by design and recorded in D24 — Project 1 is an optional extra that CI deliberately never installs. Covers the retrieval contamination guard and `test_corpus_retrievability`. |
+| `data/warehouse.duckdb` | ~15 | **Not previously recorded anywhere.** `test_describe_contract`'s real-warehouse parametrisation, plus ground truth, frozen questions and injection independence. |
+
+**One of the warehouse-gated tests matters more than the rest, and its own docstring says why.** `tests/conftest.py` states that the fixture half of the column-shape assertion is *partly circular* — it proves `describe_table` reports the catalog faithfully, not that the catalog matches `data/synthea_spec.py`. **Only the real-warehouse half proves the spec matches Synthea, and that is the half that would catch a vendor format change.** So the assertion written to catch Synthea drift runs on exactly one machine, and if `make data` stops being run locally it runs nowhere at all while CI stays green — the same structure as the incident above, one level down.
+
+**Deliberately not fixed by building a warehouse in CI.** A 200MB jar and ~112s of single-threaded generation on every run is the wrong trade for a check that only binds when Synthea itself changes. The gap is closed by *stating* it and by the re-verification item above, not by paying for it every push.
 - [ ] One committed run at `runs/demo-gate1a/`, produced by this gate's one real `make record`
 - [ ] A RECORD-mode test covering `ResultRef` resolution (seed task 3)
 - [ ] `docs/gate-1a.md` retrospective; `CLAUDE.md` gate line updated to 1b

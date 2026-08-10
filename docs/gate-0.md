@@ -77,6 +77,34 @@ had they surfaced at Gate 1 they would have been cheap to find and expensive to 
 blocks inside `architecture.md` on first invocation and tangled that churn with a real edit.
 `docs/` is excluded now.
 
+## Correction, 2026-08-10 — an exit criterion that stopped being true
+
+**This document has been false since 2026-08-06 and nobody re-checked it.** Gate 0 closed against
+architecture.md §12's definition of done, which includes **"Green CI on cassettes"**, and the
+`GATE 0: PASS` line above rests on it. On 2026-08-06, `bd1d552` deleted `data/load_fixtures.py`
+along with `data/fixtures/` and left `.github/workflows/ci.yml` invoking it. Every run since
+exited 2 at that step, **before pytest** — so for four days and 28 commits the suite did not
+execute on CI at all, while every local run stayed green.
+
+The claim was true when written and became false four commits later. Filed under the thirteenth
+instance's rule (`gate-1a.md` §3): **a claim of verification carries its method, and the method
+has to be one that could produce the claim.** "CI is green" was verified once, at the boundary,
+and then read as a standing property by everything downstream — including the README's
+clone-and-run guarantee, which has no other evidence behind it.
+
+**Forward rule, and it is the general form: a gate's exit criteria are properties, not events.**
+Every criterion phrased in the present tense — "CI is green", "`make demo` runs keyless from
+cassettes", "the README is true" — describes a state that can stop holding the moment the gate
+closes, with the retrospective still asserting it in the present tense. So each one needs either
+a check that runs continuously, or an explicit re-verification at the next gate boundary. The
+distinction is not pedantic: **an event is verified by having happened, a property by still
+holding**, and a retrospective written in the present tense quietly converts the first into the
+second.
+
+Applied here: the workflow step is removed, `tests/test_workflow_paths.py` makes this specific
+class impossible to reintroduce, and Gate 1a's exit checklist re-verifies "CI green" rather than
+inheriting it.
+
 ## Carried into Gate 1
 
 - Ground truth returns to `draft` when Synthea replaces the fixture. Non-negotiable.

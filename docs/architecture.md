@@ -489,7 +489,7 @@ Do not proceed until `make demo` prints an eval line.
 - Demo-mode Streamlit reading `runs/`
 - Results-first README with eval table + baseline column
 - 75s video
-- Green CI on cassettes
+- Green CI on cassettes — **on the hermetic subset**, which is what a runner can execute: no warehouse, no `[rag]` extra, no index, no key. Roughly 83% of the suite; the `[rag]`-gated tests skip by design (D24) and the `data/warehouse.duckdb`-gated ones — including the *non-circular* half of the `describe_table` column-shape assertion, the half that would catch a Synthea format change — run locally only. Stated rather than implied, because "green CI" read as "the whole suite passed" is how `docs/gate-0.md` came to assert a property that had stopped holding. The local half is re-verified at each gate boundary with its counts recorded (`gate-1a.md` §5).
 
 **If nothing else ships, nothing looks missing.**
 
