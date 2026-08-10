@@ -262,6 +262,105 @@ tool_error_messages:
   prohibited: row values, internal filesystem paths
   enforced: true  # tests/test_sql_error_sanitisation.py, outcome-shaped
 
+# --- Sandbox output: IN SCOPE, and designed before the sandbox ------------------------
+#
+# Written at 5.4 BEFORE any sandbox code exists, because instance #15 was a leak on the
+# failure path of a tool whose success path was correct, and the fix arrived after the
+# tool. `run_python` is the same shape with a far larger payload: it resolves a
+# `ResultRef` into a real dataframe INSIDE the container, so a script that fails while
+# holding that frame can put actual row data into an exception message. `'MEDICARE  '`
+# from a DuckDB cast is one value; a pandas `KeyError` or a `repr()` in a raised message
+# can carry many.
+#
+# THREE CHANNELS, and they need different rules because they have different authors.
+#
+# 1. stderr / the traceback — AUTHORED BY THE INTERPRETER. The model did not choose this
+#    text, so nothing about it is bounded by the model's intent. Strictest rule.
+# 2. stdout — AUTHORED BY THE MODEL'S OWN CODE. See below; the rule is a volume cap and
+#    the reason is stated rather than assumed.
+# 3. the returned artifacts — already `ResultRef`s by construction (§4). No new rule.
+#
+# --- Rule for the traceback: ALLOW-LIST, reconstructed, same as run_sql ---------------
+#
+# KEPT:
+#   - the exception CLASS (`KeyError`, `ValueError`, `ZeroDivisionError`)
+#   - the traceback's frame STRUCTURE: file, line number, function name
+#   - the failing SOURCE LINE — this is the model's own code, echoed back. Same argument
+#     as `executed_sql` on run_sql: returning someone their own input is not a leak.
+#   - container-internal paths (`/sandbox/script.py`, `/inputs/q001.parquet`)
+#
+# DROPPED:
+#   - the exception MESSAGE and args — this is where row data lands
+#   - anything rendering a local, including any `repr()` of a frame
+#   - host paths (`/Users/...`, `/var/folders/...`) — should never appear given fixed
+#     container mount points, and asserted anyway
+#   - any path under `runs/` — a `ResultRef` internal, disclosing the mechanism
+#
+# THE DROPPED MESSAGE IS A REAL COST, RECORDED AS A TRADE RATHER THAN A BARGAIN.
+# `NameError: name 'pd' is not defined` is pure signal and losing it makes the agent's
+# self-correction harder. The justification is NOT that the cost is small. It is that
+# **no statable rule separates a safe message from a leaking one**: the same `KeyError`
+# formatting that yields `KeyError: 'nosuchcolumn'` yields `KeyError: 'MEDICARE  '`, and
+# the difference is the value, not the shape. A rule that cannot be stated cannot be
+# tested, and an untestable rule in this position is the deny-list we already rejected
+# once. So the message goes, and the cost is written down instead of argued away.
+#
+# TO CHECK ONCE THE SANITISER LANDS, and to report as a finding either way: are the
+# common failure modes actually self-correctable from class + source line + line number?
+# If they are not, that is a finding ABOUT THE TRADE and it gets reported. It is not a
+# licence to widen the allow-list quietly.
+#
+# --- Rule for stdout: a volume cap, and why kind is not checked ------------------------
+#
+# Decided explicitly, because a byte cap bounds volume and not kind — a truncated frame
+# is still a frame, and 50 lines of row data is 50 lines of row data.
+#
+# The cap is nonetheless the right and sufficient control here, for two reasons that are
+# specific rather than general:
+#
+#   VOLUME IS THE UNIT §4 ACTUALLY MEASURES. The rule "never pass a dataframe through an
+#   LLM context" exists to bound context and make `context.bundle_tokens` a measurable
+#   per-step metric. A hard byte and line cap delivers exactly that property. Bounding
+#   *kind* would serve a different goal than the one §4 states.
+#
+#   THE MODEL AUTHORED IT, FROM INPUTS IT ALREADY HOLDS. stdout contains what the
+#   model's own code chose to print, from frames it explicitly passed as `inputs` and
+#   resolved on purpose. It cannot surface data the model was not already entitled to —
+#   which is precisely what makes it different from the traceback, where the interpreter
+#   chose the content.
+#
+# AND THE CONTROL FOR *KIND* IS THE MOUNT POLICY, NOT OUTPUT INSPECTION. The real
+# question behind "what kind of data can come back" is "what data can be in the container
+# at all", and that is answered by `--network none`, a read-only rootfs, and mounting
+# only the explicitly-passed `ResultRef` files read-only. A shape check on stdout would
+# be a deny-list guessing at what "frame-shaped" means — a CSV-ish blob? a dict repr? —
+# which is the form this project rejected for `TableProfile` and for the DuckDB error
+# text, and it would fail the same way.
+#
+# So: no shape check, a stated cap, and an outcome test that a script printing a large
+# frame is truncated with an explicit marker — so the bound holds without anything having
+# to judge intent.
+#
+# STATUS: not enforced; `run_python` does not exist yet. This section is the
+# specification it will be built against, and `enforced` flips in the same commit as the
+# tool, with the outcome test written alongside it rather than after.
+sandbox_output:
+  in_scope: true
+  channels:
+    traceback:
+      author: the interpreter
+      permitted: exception class, frame structure (file, line, function), the failing
+        source line, container-internal paths
+      prohibited: exception message and args, any rendered local, host paths, runs/ paths
+    stdout:
+      author: the model's own code
+      permitted: anything, up to a hard byte and line cap with a truncation marker
+      prohibited: nothing by kind — see the stated argument above
+    artifacts:
+      author: the model's own code
+      permitted: ResultRef only, never a frame
+  enforced: false  # run_python does not exist yet; flips with the tool
+
 # --- OPEN DECISION: behavioural leakage -----------------------------------------------
 #
 # Recorded 2026-08-08, unresolved, for the 5.3 prompt review.
