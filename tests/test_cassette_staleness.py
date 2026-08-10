@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from analyst.replay import manifest as m
-from analyst.replay import prompt_identity
+from analyst.replay import prompt_identity, sandbox_identity
 from evals.report import FAIL, PASS, STALE, verdict
 from evals.runner import EvalReport
 
@@ -221,6 +221,46 @@ class TestStalenessDetection:
             "cassettes are still valid and the verdict must stay clean"
         )
 
+    def test_a_sandbox_edit_alone_flips_the_verdict(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The fourth identity field, isolated the same way as the other three.
+
+        `run_python` returns whatever the image computed, so the image is part of the
+        call: the same script against a different pandas is a different call. Without
+        this, a Dockerfile edit would leave every run_python cassette replaying a
+        result computed by an image that no longer exists.
+        """
+        dockerfile = tmp_path / "sandbox.Dockerfile"
+        dockerfile.write_text("FROM python:3.12.3-slim@sha256:aaaa\n")
+        monkeypatch.setattr(sandbox_identity, "dockerfile_path", lambda: dockerfile)
+        monkeypatch.setattr(m, "manifest_path", lambda: tmp_path / "manifest.json")
+        monkeypatch.setattr(m, "current_warehouse_version", lambda: "synthea-v4")
+        monkeypatch.setattr(m, "current_corpus_version", lambda: "corpus-1")
+
+        m.write_manifest("synthea-v4", "corpus-1", "sha")
+        assert m.staleness_note() is None, "a freshly recorded manifest is not stale"
+
+        dockerfile.write_text(
+            "FROM python:3.12.3-slim@sha256:aaaa\nRUN pip install pandas==2.2.3\n"
+        )
+
+        note = m.staleness_note()
+        assert note is not None, (
+            "the sandbox image recipe changed and the staleness check did not notice — "
+            "every run_python cassette now replays a result computed by a different "
+            "image"
+        )
+        assert "sandbox" in note
+
+    def test_sandbox_version_needs_no_docker_daemon(self) -> None:
+        """The property that lets CI compute the key at all.
+
+        The runner has no daemon, so an identity that required one would make the
+        cassette key uncomputable in exactly the environment the cassettes exist for.
+        """
+        assert len(sandbox_identity.sandbox_version()) == 16
+
     def test_committed_warehouse_version_is_present(self) -> None:
         """`data/warehouse_version.txt` is committed even though the warehouse is not.
 
@@ -249,3 +289,90 @@ def test_manifest_follows_the_monkeypatched_cassette_root(
     assert m.manifest_path() == tmp_path / "manifest.json"
     m.write_manifest("w", "c", "sha")
     assert (tmp_path / "manifest.json").is_file()
+
+
+class TestCassetteIdentityCoverage:
+    """The manifest's incompleteness is enumerated, not merely described.
+
+    Every field added to the manifest makes it look more complete while the remaining
+    gap gets harder to notice. Prose saying "this is incomplete" ages into decoration;
+    a set that fails when it goes out of date does not.
+    """
+
+    def test_every_cassette_key_field_is_classified(self) -> None:
+        """Adding a field to `LLMRequest` must fail until someone classifies it.
+
+        This is the assertion behind D31's claim that the gap is known rather than
+        overlooked. Without it, the next field added to the request silently joins the
+        uncovered set and nothing says so.
+        """
+        from analyst.llm.client import LLMRequest
+
+        fields = set(LLMRequest.model_fields)
+        classified = (
+            set(m.COVERED_BY_MANIFEST)
+            | set(m.PER_CALL_FIELDS)
+            | set(m.UNCOVERED_BY_MANIFEST)
+        )
+        assert fields == classified, (
+            "LLMRequest fields and the manifest's classification disagree.\n"
+            f"  in the key, unclassified: {sorted(fields - classified)}\n"
+            f"  classified, not in the key: {sorted(classified - fields)}\n\n"
+            "Every field in the cassette key is covered by a manifest field, a "
+            "per-call input, or an entry in UNCOVERED_BY_MANIFEST with its reason and "
+            "trigger. A new field defaults to none of those, which is how a gap gets "
+            "wider without anyone deciding it should."
+        )
+
+    def test_every_uncovered_field_states_a_reason(self) -> None:
+        for field, reason in m.UNCOVERED_BY_MANIFEST.items():
+            assert reason and len(reason) > 40, (
+                f"{field}: an uncovered field needs the reason it is left, or it is "
+                "indistinguishable from one nobody considered"
+            )
+
+    def test_the_model_field_names_its_trigger(self) -> None:
+        """The one with a scheduled trigger, asserted so it cannot quietly lapse."""
+        assert "Gate 3" in m.UNCOVERED_BY_MANIFEST["model"]
+
+
+class TestSandboxImageIsVerifiedNotAssumed:
+    """The outcome half of the sandbox identity, and it must be fatal.
+
+    `sandbox_version()` hashes the Dockerfile — the ARGUMENT that the image is what we
+    think. This comparison against the running image's label is the OUTCOME. A recipe
+    hash alone is the eleventh instance's shape (`messify.py`'s source hash, which
+    failed in both directions), so an advisory check here would be the defect wearing
+    the fix as a disguise.
+    """
+
+    def test_a_matching_label_passes(self) -> None:
+        version = sandbox_identity.sandbox_version()
+        sandbox_identity.verify_image_version(
+            {sandbox_identity.SANDBOX_VERSION_LABEL: version}
+        )
+
+    def test_a_mismatched_label_stops_execution(self) -> None:
+        """The assertion the whole pairing exists for."""
+        with pytest.raises(sandbox_identity.SandboxImageMismatchError) as exc:
+            sandbox_identity.verify_image_version(
+                {sandbox_identity.SANDBOX_VERSION_LABEL: "deadbeefdeadbeef"}
+            )
+        assert "deadbeefdeadbeef" in str(exc.value)
+        assert sandbox_identity.sandbox_version() in str(exc.value)
+
+    def test_an_unlabelled_image_stops_execution(self) -> None:
+        """Absent is not a pass. An image with no label cannot be identified at all."""
+        for labels in ({}, None):
+            with pytest.raises(sandbox_identity.SandboxImageMismatchError):
+                sandbox_identity.verify_image_version(labels)
+
+    def test_the_check_needs_no_docker_daemon(self) -> None:
+        """Pure over the labels, so the caller owns the `docker inspect`.
+
+        Keeps the comparison — the part that must never be skipped — testable in CI,
+        where the sandbox itself cannot run.
+        """
+        sandbox_identity.verify_image_version(
+            {"sandbox_version": "abc"}, expected="abc"
+        )

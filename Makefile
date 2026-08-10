@@ -86,6 +86,19 @@ demo:
 	$(PY) -m evals.runner  --run-id $(RUN_ID)
 	$(PY) -m evals.report  --run-id $(RUN_ID)
 
+# Build the run_python sandbox image, injecting the committed Dockerfile's hash as a
+# LABEL. That label is what `LocalDockerSandbox` reads back and compares before running
+# anything: the hash is the argument that the image is what we think, the label check is
+# the outcome. Rebuild after ANY edit to docker/sandbox.Dockerfile — including a comment,
+# which changes sandbox_version and therefore every run_python cassette key.
+.PHONY: sandbox
+sandbox:
+	$(PY) -c "from analyst.replay.sandbox_identity import sandbox_version; print(sandbox_version())" \
+	  | xargs -I{} docker build \
+	      --build-arg SANDBOX_VERSION={} \
+	      -t analyst-sandbox:local \
+	      -f docker/sandbox.Dockerfile docker/
+
 # Live run that also writes cassettes, and the only thing that refreshes the
 # committed demo run. Needs ANTHROPIC_API_KEY and the warehouse.
 record: data

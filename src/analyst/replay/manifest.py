@@ -16,14 +16,17 @@ Both sides are committed, so the check works on a clean clone with no warehouse:
 `cassettes/manifest.json` is written by a RECORD run and committed. An absent manifest
 means the cassettes predate this mechanism — which is exactly the fixture era.
 
-**This identity is not complete, and must not be read as though it were.** The LLM
-cassette key hashes the whole request: the system prompt, the JSON schema of the
-structured response, the model id and the effort setting. `prompts_version` covers the
-first of those (see `prompt_identity`, added at 5.3 after a prompt rewrite produced a
-`CassetteMissError` where this module was built to produce `STALE`). The rest are still
-uncovered, so a model or schema change invalidates every cassette while this manifest
-compares equal. **If that ever surfaces as a crash where staleness was expected, it is
-the same finding on a different input** — extend the identity, do not patch the symptom.
+**This identity is not complete, and the incompleteness is enumerated rather than
+described.** The LLM cassette key hashes the whole `LLMRequest`, and four of its fields
+are repo-level configuration this manifest does not cover. Which four, and why each is
+left, is in `UNCOVERED_BY_MANIFEST` below — asserted by
+`test_every_cassette_key_field_is_classified`, so adding a field to `LLMRequest` fails
+until someone decides which category it is in.
+
+**That assertion is the point, not the coverage.** Each field added here makes the
+manifest look more complete while the remaining gap gets harder to notice — the inverse
+of "closes the largest gap, not the class" (D31). Prose saying "this is incomplete" ages
+into decoration; a set that fails when it goes out of date does not.
 """
 
 from __future__ import annotations
@@ -33,7 +36,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from analyst.contracts import Contract
-from analyst.replay import prompt_identity, store
+from analyst.replay import prompt_identity, sandbox_identity, store
 
 #: Marker used when the cassettes predate the manifest entirely.
 FIXTURE_ERA = "fixture-era"
@@ -42,6 +45,48 @@ FIXTURE_ERA = "fixture-era"
 #: required so an older committed manifest still loads — and it compares unequal to any
 #: real hash, so those cassettes correctly read as stale rather than as current.
 PROMPTS_UNRECORDED = "prompts-unrecorded"
+
+#: `LLMRequest` fields this manifest covers, and with what.
+COVERED_BY_MANIFEST: dict[str, str] = {"system": "prompts_version"}
+
+#: `LLMRequest` fields that are per-call inputs rather than repo configuration. A
+#: manifest cannot cover these and should not try: they vary by design every call, and
+#: their *sources* (the warehouse, the corpus) are covered instead.
+PER_CALL_FIELDS: frozenset[str] = frozenset({"agent_role", "messages"})
+
+#: Repo-level configuration in the cassette key that this manifest does NOT cover, with
+#: the reason and the trigger that would change the answer (D31, decided at 5.4).
+#:
+#: **The criterion is not "how often does it change" but "how far is the change from the
+#: person who sees the failure".** Detection is never at risk: any of these moving
+#: produces a `CassetteMissError`, loudly, and since 5.3 that error carries
+#: `staleness_note()`. What a manifest field buys is *naming which input moved*, turning
+#: "why did this break?" into "oh, right." That is worth a lot for the warehouse and the
+#: corpus, which are edited in sessions far from the demo path by an unrelated concern,
+#: and worth little for a value someone deliberately edited in a committed config file
+#: minutes earlier, in the same session as the crash.
+UNCOVERED_BY_MANIFEST: dict[str, str] = {
+    "model": (
+        "from config/models.yaml, a committed constant today. TRIGGER: Gate 3's "
+        "model-tier sweep (D13) makes the model a swept variable rather than a "
+        "constant, at which point cassettes are per-model and a mismatch is no longer "
+        "traceable to 'I just edited models.yaml'. Cover it then."
+    ),
+    "effort": "same source and same trigger as `model`; they move together",
+    "max_tokens": (
+        "committed per-role budget. Changing it changes the key but not the answer's "
+        "meaning, and the person who raised a budget is the person who sees the miss"
+    ),
+    "json_schema": (
+        "derived from the response contract. A contract change is already loud — "
+        '`extra="forbid"` makes it fail at validation, not only at the cassette'
+    ),
+}
+
+#: Marker for a manifest written before `sandbox_version` existed. Same reasoning as
+#: `PROMPTS_UNRECORDED`: defaulted so an older manifest still loads, and unequal to any
+#: real hash so those cassettes correctly read as stale.
+SANDBOX_UNRECORDED = "sandbox-unrecorded"
 
 
 class CassetteManifest(Contract):
@@ -52,6 +97,7 @@ class CassetteManifest(Contract):
     recorded_at: str
     git_sha: str = "unknown"
     prompts_version: str = PROMPTS_UNRECORDED
+    sandbox_version: str = SANDBOX_UNRECORDED
 
 
 def _repo_root() -> Path:
@@ -121,6 +167,16 @@ def current_prompts_version() -> str:
     return prompt_identity.prompts_version()
 
 
+def current_sandbox_version() -> str:
+    """Identity of the execution sandbox committed in the repo.
+
+    Hashed from `docker/sandbox.Dockerfile`, so this works on a clean clone with no
+    Docker daemon — the same property that lets the retrieval and prompt identities be
+    computed in CI.
+    """
+    return sandbox_identity.sandbox_version()
+
+
 def write_manifest(warehouse_version: str, corpus_version: str, git_sha: str) -> Path:
     path = manifest_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -133,6 +189,7 @@ def write_manifest(warehouse_version: str, corpus_version: str, git_sha: str) ->
         # the run actually used, which is whatever is committed. A parameter would let
         # a caller record an identity that did not produce the cassettes.
         prompts_version=current_prompts_version(),
+        sandbox_version=current_sandbox_version(),
     )
     path.write_text(json.dumps(manifest.model_dump(), indent=2, sort_keys=True) + "\n")
     return path
@@ -175,6 +232,14 @@ def staleness_note() -> str | None:
             f"cassettes were recorded against corpus {manifest.corpus_version}, but "
             f"the committed metrics dictionary is now {corpus} — corpus_version is "
             "part of the retrieval cassette key, so every retrieval cassette is "
+            "superseded"
+        )
+    sandbox = current_sandbox_version()
+    if manifest.sandbox_version != sandbox:
+        return (
+            f"cassettes were recorded against sandbox {manifest.sandbox_version}, but "
+            f"the committed sandbox image recipe is now {sandbox} — sandbox_version is "
+            "part of the run_python cassette key, so every sandbox cassette is "
             "superseded"
         )
     return None

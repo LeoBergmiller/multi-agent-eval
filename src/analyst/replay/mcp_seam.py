@@ -21,6 +21,12 @@ from analyst.replay.store import CassetteStore, Seam
 #: and it is knowledge the spec puts here deliberately.
 CORPUS_DEPENDENT_TOOLS: frozenset[str] = frozenset({"search_metric_definitions"})
 
+#: Tools whose result depends on the execution image as well as on their arguments.
+#: The same script against a different pandas is a different call, so keying on
+#: arguments alone would replay one as though it answered the other — `corpus_version`'s
+#: argument (§6.2, D26) on the sandbox axis.
+SANDBOX_DEPENDENT_TOOLS: frozenset[str] = frozenset({"run_python"})
+
 
 class ReplayingMCPClient:
     """Wraps an `MCPClient`, recording or replaying at the tool-call boundary.
@@ -43,10 +49,12 @@ class ReplayingMCPClient:
         inner: MCPClient | None,
         store: CassetteStore,
         corpus_version: str | None = None,
+        sandbox_version: str | None = None,
     ) -> None:
         self._inner = inner
         self._store = store
         self._corpus_version = corpus_version
+        self._sandbox_version = sandbox_version
 
     def _payload(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         payload: dict[str, Any] = {"tool": name, "arguments": arguments}
@@ -58,6 +66,14 @@ class ReplayingMCPClient:
                     "definition replay a stale retrieval (§6.2)."
                 )
             payload["corpus_version"] = self._corpus_version
+        if name in SANDBOX_DEPENDENT_TOOLS:
+            if self._sandbox_version is None:
+                raise ValueError(
+                    f"{name!r} is sandbox-dependent but no sandbox_version reached "
+                    "the MCP seam. Keying it on arguments alone would let a changed "
+                    "image replay a result computed by a different one (§6.2)."
+                )
+            payload["sandbox_version"] = self._sandbox_version
         return payload
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> ToolCallResult:
