@@ -213,8 +213,13 @@ def run_python(code: str, inputs: list[ResultRef]) -> ExecResult: ...
 ```
 
 ### Resources
-- `schema://warehouse`
-- `docs://metrics/{doc_id}`
+
+**Each is built only if something consumes it. A resource with no consumer is the dead-adapter charge in a different costume** — the same argument that keeps E2B unimplemented (D11).
+
+- ~~`schema://warehouse`~~ — **scoped out**, trigger: a client other than our own graph consumes the server. `describe_schema` already serves our own graph, so the resource would duplicate it for no reader. Recorded in the not-built table in `decisions.md`. *Written down 2026-08-10; the decision was made earlier and left unrecorded, so for several steps the repo said "2 resources" while the plan said one — see `gate-1a.md` §3.*
+- `docs://metrics/{doc_id}` — **pending the same test at 5.6.** If the Docs Analyst cites `doc_id`s returned by `search_metric_definitions` without ever fetching the resource, it has no consumer either and goes the same way.
+
+**If both go, the three-primitives claim (D3) becomes tools + prompts, and that is still accurate** — what D3 buys is having built a server rather than only consumed one, which two primitives demonstrate as well as three. Shipping an unread resource to keep a number at three would be building for the sentence rather than the system.
 
 ### Prompts
 - `analyst/plan`

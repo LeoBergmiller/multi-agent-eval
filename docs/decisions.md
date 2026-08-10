@@ -424,6 +424,7 @@ Demo-mode + video, not a product. Public Streamlit link over 5 committed `runs/`
 | Network topology | never here — traces become unattributable |
 | Critic Agent | deterministic validator node suffices |
 | OAuth 2.1 on MCP | multi-tenant or external consumers |
+| `schema://warehouse` MCP resource | a client other than our own graph consumes the server |
 | E2B sandbox | multi-tenant untrusted execution I don't operate |
 | Polished consumer UI | P4 carries product weight |
 | Custom trace viewer | LangSmith + `spans.jsonl` renderer suffices |

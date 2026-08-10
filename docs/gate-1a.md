@@ -112,12 +112,14 @@ Step 5 has been executed against a 5.1–5.7 decomposition that existed only in 
 | 5.3 | SQL Analyst / Planner / Synthesizer prompt rewrite; `run_sql` error sanitiser | done |
 | 5.4 | `run_python` + `LocalDockerSandbox`, **with `sandbox_version` in the cassette key in the same commit** | next |
 | 5.5 | — folded into 5.4, see below | — |
-| 5.6 | `schema://warehouse` **and** `docs://metrics/{doc_id}`; `analyst/plan` and `analyst/sql_style` | pending |
+| 5.6 | `analyst/plan` and `analyst/sql_style`; each resource **only if it has a consumer** | pending |
 | 5.7 | RECORD-mode `ResultRef` resolution test; the wholesale cassette re-record | pending |
 
 **5.5 is folded into 5.4 rather than sequenced after it.** Shipping the tool first and its cassette identity second opens a window in which `run_python` cassettes exist keyed on nothing that identifies the sandbox — which is D26's defect exactly (`corpus_version` absent from the retrieval key), and the twentieth instance's (an identity blind to one of its own inputs), both of which this gate has already paid for once. `CLAUDE.md`'s standing rule already covers it: every capability ships with its span attributes and its metric in the same PR.
 
-**5.6 covers both resources.** Earlier notes named only `docs://metrics/{doc_id}`; architecture.md §4 specifies `schema://warehouse` too, and §5's exit checklist counts two. `server.py`'s module docstring says "the resource" in the singular and is stale.
+**5.6 builds a resource only if something reads it.** `schema://warehouse` is **scoped out** — trigger: a client other than our own graph consumes the server; `describe_schema` already serves ours. `docs://metrics/{doc_id}` faces the same test at 5.6: if the Docs Analyst cites `doc_id`s from `search_metric_definitions` without fetching the resource, it has no consumer and goes too. Restoring either to match architecture.md's count would be the dead-adapter charge with extra steps.
+
+**How this was nearly got wrong, recorded because the near-miss is the lesson.** This substep first read "5.6 covers both resources", on the reasoning that §4 specifies two and the exit checklist counts two. That is reinstating a component to satisfy a number. The `schema://warehouse` decision had in fact been made at step 5 and **never written down** — not in the not-built table, whose own closing line is *"naming the trigger is the difference between 'I skipped it' and 'I scoped it'"*, not in a commit, not in a comment. Its only trace was `server.py` saying "the resource" in the singular. So the artifacts supported neither reading, and the count in §4 was the loudest surviving signal — which is exactly how an unrecorded decision gets reversed by the next person to read the spec.
 
 ---
 
@@ -369,6 +371,18 @@ Planner must now emit plans with genuine fan-out: a `Plan` DAG where the docs lo
 
   **The portfolio-specific trap, recorded because it is the expensive part.** `docs/gate-0.md` records green hermetic CI as an achieved exit criterion and the README's clone-and-run claim rests on it, so the repo asserted in its own documentation a property that had not held for four days — to a reader, and to an interviewer clicking the badge. Corrected in `gate-0.md` under the thirteenth instance's rule, with the forward rule stated there: **a gate's exit criteria are properties, not events.** "CI is green" was true when the gate closed and stopped being true four commits later with nothing watching, because a retrospective written in the present tense converts a thing that *happened* into a thing that *holds*. Every present-tense criterion needs a continuous check or an explicit re-verification at the next boundary; Gate 1a's checklist now carries one.
 
+- **A constraint is only a measurement if the prohibited thing was reachable.** Two instances, and they belong side by side because the second was found by applying the first's rule somewhere new.
+
+  **`loop_rate = 0` (already recorded in §4).** Zero is a claim about the *system* only if some task could have produced a nonzero value. If no task creates the conditions for a loop, zero is a property of the task set, and reporting it as reliability is a false claim.
+
+  **`forbidden_tools: [run_python]` on seed task 5, which is the same defect one layer up.** Task 5 exists to measure over-tooling restraint: does the agent reach for the sandbox when SQL suffices? But at the end of 1a **no node can call `run_python`** — the Quant Analyst is 1b, and 1a ends at four nodes. So the constraint forbids something the agent could not have done, and a green result on task 5 measures the node wiring rather than the agent's judgement. It would read as restraint and be arithmetic.
+
+  The two differ in a way worth keeping: `loop_rate`'s floor is unreachable because *the task set* does not induce the behaviour, task 5's because *the system* cannot perform it. Same false conclusion from opposite causes — one a gap in what we asked, one a gap in what was wired.
+
+  **Generalised: before reporting that a constraint held, establish that violating it was possible.** For a prohibition, that means naming the path the agent could have taken; for a floor-of-zero metric, naming the case that would have moved it. Both are one sentence to write and neither is implied by a passing test — a test that a forbidden tool was not called passes identically whether the agent showed restraint or the tool was unreachable, and nothing in the trace distinguishes them.
+
+  Consequence for 1a, recorded in §5's checklist rather than left implicit: `run_python` ships **proven by tests only**, task 5's trap does not bind until 1b, and the RECORD-mode `ResultRef` test must call the tool directly rather than running seed task 3 through the graph.
+
 - **Replay covers the cassetted result, not the artifact behind the ref.** A replayed run's `results/` is empty by design: the recorded artifact is the `ResultRef`, not the frame it points at, and recording the frame would be a third seam. So any new path that *resolves* a ref to its file is invisible to the hermetic gate — it passes CI and fails only live. **Every new ref-consuming path needs a RECORD-mode test.** First one due with seed task 3 (`run_sql → run_python`), which is the first consumer of the frame behind a ref.
 - **No global state.** The tracer is threaded through `RunContext`. Nothing new sets a process-global.
 - **`extra="forbid"` on every contract.** It caught a partial `TaskFile` model at Gate 0.
@@ -399,7 +413,8 @@ Quant Analyst · Validator node · replan edge · failure injection · the seven
 - [ ] 7 task intents drafted in prose (step 3.5) before the dictionary was authored
 - [ ] Metrics dictionary committed: 11 load-bearing + 20 distractors, `corpus_version` in the cassette key
 - [ ] **Retrievability probed, not assumed:** every load-bearing entry is retrieved within `k` by at least one natural phrasing of a task it governs. An entry that cannot be retrieved is not load-bearing, however correct it is — see the ninth silent-failure instance. Verified by `tests/test_corpus_retrievability.py`, which is skipped without the index and must be run deliberately when the corpus changes.
-- [ ] All 5 tools, 2 resources, 2 prompts live; `LocalDockerSandbox` hardened as specified
+- [ ] All 5 tools and 2 prompts live; `LocalDockerSandbox` hardened as specified. **Resources are built per consumer, not per count** — `schema://warehouse` is scoped out with a recorded trigger, `docs://metrics/{doc_id}` faces the same test at 5.6 (§2 step 5)
+- [ ] **`run_python` is proven by tests only at 1a, and the checklist says so.** No node can call it — the Quant Analyst is 1b — so "the tool is live" means registered and tested, not exercised by an agent. Seed task 3 cannot run end to end until 1b, and task 5's `forbidden_tools: [run_python]` measures nothing here (see §3)
 - [ ] Docs Analyst node; Planner emits genuine fan-out
 - [ ] 7 seed tasks, all `status: verified` with recorded method
 - [ ] **Exit criterion met:** a question requiring both SQL and a docs lookup answers correctly, and skipping the lookup demonstrably produces a wrong number
