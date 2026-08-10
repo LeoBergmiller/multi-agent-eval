@@ -101,6 +101,34 @@ Tools: `describe_schema`, `describe_table`, `search_metric_definitions`, `run_py
 
 `describe_table` must return the real Synthea column set. Its output shape is what the SQL Analyst prompt is written against.
 
+#### Substeps — written down 2026-08-10, because they were not
+
+Step 5 has been executed against a 5.1–5.7 decomposition that existed only in session context and in `CLAUDE.md`'s five-item resume order. A finer plan than the written one has nowhere to carry a tracked item, which is how the item below went four days without a home. Recorded here so the two agree.
+
+| # | Scope | Status |
+|---|---|---|
+| 5.1 | `describe_schema` / `describe_table` against the real nine-table warehouse | done |
+| 5.2 | `describe_table`'s output shape pinned by contract + test | done |
+| 5.3 | SQL Analyst / Planner / Synthesizer prompt rewrite; `run_sql` error sanitiser | done |
+| 5.4 | `run_python` + `LocalDockerSandbox`, **with `sandbox_version` in the cassette key in the same commit** | next |
+| 5.5 | — folded into 5.4, see below | — |
+| 5.6 | `schema://warehouse` **and** `docs://metrics/{doc_id}`; `analyst/plan` and `analyst/sql_style` | pending |
+| 5.7 | RECORD-mode `ResultRef` resolution test; the wholesale cassette re-record | pending |
+
+**5.5 is folded into 5.4 rather than sequenced after it.** Shipping the tool first and its cassette identity second opens a window in which `run_python` cassettes exist keyed on nothing that identifies the sandbox — which is D26's defect exactly (`corpus_version` absent from the retrieval key), and the twentieth instance's (an identity blind to one of its own inputs), both of which this gate has already paid for once. `CLAUDE.md`'s standing rule already covers it: every capability ships with its span attributes and its metric in the same PR.
+
+**5.6 covers both resources.** Earlier notes named only `docs://metrics/{doc_id}`; architecture.md §4 specifies `schema://warehouse` too, and §5's exit checklist counts two. `server.py`'s module docstring says "the resource" in the singular and is stale.
+
+---
+
+**2026-08-10 — the README's clone-and-run claim is FALSE until 5.7 re-records the LLM cassettes.**
+
+5.3 rewrote the prompts, which are part of the LLM cassette key, so every committed LLM cassette is superseded and `make demo` raises `CassetteMissError`. Seven tests are `xfail(strict=True)` pending the re-record, including `test_smoke_task_replays_without_credentials` — the clone-and-run guarantee itself. A stranger following the README today gets a traceback.
+
+**Trigger: if 1a reaches step 7 with the re-record outstanding, the re-record jumps the queue.** Step 7 signs ground truth under D17, and signing numbers against a harness whose demo path has not executed end to end since step 5 is the wrong order regardless of cassette state — the human would be signing against a pipeline nobody has run.
+
+This is the twentieth instance's shape — a present-tense claim with nothing watching it — with one difference: **this one is known.** That is not as much protection as it sounds. Known-but-untracked becomes forgotten-but-untracked across five sub-gates, and the four days of red CI are the evidence that "we know about it" is not a mechanism. The `xfail(strict=True)` markers are the mechanism; this line is the reminder that they are load-bearing.
+
 ### Step 6 — Docs Analyst node
 
 Thin: `SubTask` → `search_metric_definitions` → `AgentResult` with `artifact_refs` and `assumptions_made`. Bounded `context_bundle` — it receives its subtask and input refs, nothing else.
