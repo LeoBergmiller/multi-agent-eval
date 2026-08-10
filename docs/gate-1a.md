@@ -112,12 +112,18 @@ Step 5 has been executed against a 5.1–5.7 decomposition that existed only in 
 | 5.3 | SQL Analyst / Planner / Synthesizer prompt rewrite; `run_sql` error sanitiser | done |
 | 5.4 | `run_python` + `LocalDockerSandbox`, **with `sandbox_version` in the cassette key in the same commit** | next |
 | 5.5 | — folded into 5.4, see below | — |
-| 5.6 | `analyst/plan` and `analyst/sql_style`; each resource **only if it has a consumer** | pending |
+| 5.6 | `analyst/plan` and `analyst/sql_style`. **No resources** — see below | pending |
 | 5.7 | RECORD-mode `ResultRef` resolution test; the wholesale cassette re-record | pending |
 
 **5.5 is folded into 5.4 rather than sequenced after it.** Shipping the tool first and its cassette identity second opens a window in which `run_python` cassettes exist keyed on nothing that identifies the sandbox — which is D26's defect exactly (`corpus_version` absent from the retrieval key), and the twentieth instance's (an identity blind to one of its own inputs), both of which this gate has already paid for once. `CLAUDE.md`'s standing rule already covers it: every capability ships with its span attributes and its metric in the same PR.
 
-**5.6 builds a resource only if something reads it.** `schema://warehouse` is **scoped out** — trigger: a client other than our own graph consumes the server; `describe_schema` already serves ours. `docs://metrics/{doc_id}` faces the same test at 5.6: if the Docs Analyst cites `doc_id`s from `search_metric_definitions` without fetching the resource, it has no consumer and goes too. Restoring either to match architecture.md's count would be the dead-adapter charge with extra steps.
+**5.6 builds no resources, and the `docs://` decision moves to step 6.** `schema://warehouse` is **scoped out** — trigger: a client other than our own graph consumes the server; `describe_schema` already serves ours.
+
+`docs://metrics/{doc_id}` faces the same per-consumer test, and **its only possible consumer is the Docs Analyst, which is step 6 — after 5.6.** So the test cannot be run at 5.6 and the decision moves to step 6 rather than being guessed at. The alternative — building it provisionally at 5.6 with the drop deferred — is building a component whose consumer does not exist yet on the strength of an expectation, which is the exact thing the per-consumer rule exists to prevent; deferring the decision costs nothing, while deferring the *deletion* means arguing later against code that already works.
+
+**Leading hypothesis, to be tested at step 6 and not assumed:** it goes. `search_metric_definitions` already returns passages with their `doc_id`, and `must_cite: [docs://metrics/readmission_30day]` uses the URI as a **citation identifier**, which requires the string to be well-formed and not the resource to be fetchable. If that holds, nothing ever reads the resource.
+
+Restoring either to match architecture.md's count would be the dead-adapter charge with extra steps.
 
 **How this was nearly got wrong, recorded because the near-miss is the lesson.** This substep first read "5.6 covers both resources", on the reasoning that §4 specifies two and the exit checklist counts two. That is reinstating a component to satisfy a number. The `schema://warehouse` decision had in fact been made at step 5 and **never written down** — not in the not-built table, whose own closing line is *"naming the trigger is the difference between 'I skipped it' and 'I scoped it'"*, not in a commit, not in a comment. Its only trace was `server.py` saying "the resource" in the singular. So the artifacts supported neither reading, and the count in §4 was the loudest surviving signal — which is exactly how an unrecorded decision gets reversed by the next person to read the spec.
 
@@ -134,6 +140,8 @@ This is the twentieth instance's shape — a present-tense claim with nothing wa
 ### Step 6 — Docs Analyst node
 
 Thin: `SubTask` → `search_metric_definitions` → `AgentResult` with `artifact_refs` and `assumptions_made`. Bounded `context_bundle` — it receives its subtask and input refs, nothing else.
+
+**Decide `docs://metrics/{doc_id}` here, deferred from 5.6.** This node is the resource's only possible consumer, so this is the first point at which the per-consumer test can actually be run rather than guessed. Build it only if this node reads it; if it cites `doc_id`s returned by `search_metric_definitions` without fetching the resource, it has no consumer and is scoped out with its trigger recorded in `decisions.md`'s not-built table. See §2 step 5 for the leading hypothesis and why guessing at 5.6 was refused.
 
 Planner must now emit plans with genuine fan-out: a `Plan` DAG where the docs lookup and the SQL work are separate `SubTask`s with a `required_order` dependency.
 
@@ -371,6 +379,21 @@ Planner must now emit plans with genuine fan-out: a `Plan` DAG where the docs lo
 
   **The portfolio-specific trap, recorded because it is the expensive part.** `docs/gate-0.md` records green hermetic CI as an achieved exit criterion and the README's clone-and-run claim rests on it, so the repo asserted in its own documentation a property that had not held for four days — to a reader, and to an interviewer clicking the badge. Corrected in `gate-0.md` under the thirteenth instance's rule, with the forward rule stated there: **a gate's exit criteria are properties, not events.** "CI is green" was true when the gate closed and stopped being true four commits later with nothing watching, because a retrospective written in the present tense converts a thing that *happened* into a thing that *holds*. Every present-tense criterion needs a continuous check or an explicit re-verification at the next boundary; Gate 1a's checklist now carries one.
 
+- **The advisory conversation has been acting as a second, unversioned source of truth — and it is the one both parties reach for first.** This is not an instance; it is the shared cause behind four of them, recorded separately because fixing them one at a time has not worked.
+
+  | what lived only in conversation | how it surfaced |
+  |---|---|
+  | the `schema://warehouse` drop and its trigger | nearly reinstated to match architecture.md's count |
+  | the 5.1–5.7 substep decomposition | no slot in the written plan to hold a tracked item, so one went four days without a home |
+  | "CI is green" as a standing property rather than a past event | four days of a suite that did not run |
+  | the `attributed_organization` demotion | applied to the prohibition list, not to the guard reading it |
+
+  **A decision that lives only in conversation is invisible to `grep`, absent from a clean clone, and unavailable to the next session.** Worse, it does not fail — the repo stays internally consistent around the gap, so the artifacts read as complete. When the `schema://warehouse` question came up, the loudest surviving signal was the *count* in architecture.md §4, and the count was the thing the decision had overruled. An unrecorded decision does not merely go missing; **it gets actively reversed by whatever written artifact it contradicted.**
+
+  **The failure is not that someone forgot to write it down. It is that nothing checks.** `decisions.md` has a not-built table that insists on naming triggers, and its closing line is *"naming the trigger is the difference between 'I skipped it' and 'I scoped it'"* — and there is no mechanism asserting that a scoped-out component has an entry. The discipline is stated and unenforced, which across a long build is the same as absent. Compare `test_workflow_paths.py`: the fix for a class is a static assertion someone else's carelessness trips, not a stronger intention.
+
+  **Proposed guard — spec-vs-code drift, shape agreed before building** (see below).
+
 - **A constraint is only a measurement if the prohibited thing was reachable.** Two instances, and they belong side by side because the second was found by applying the first's rule somewhere new.
 
   **`loop_rate = 0` (already recorded in §4).** Zero is a claim about the *system* only if some task could have produced a nonzero value. If no task creates the conditions for a loop, zero is a property of the task set, and reporting it as reliability is a false claim.
@@ -379,7 +402,11 @@ Planner must now emit plans with genuine fan-out: a `Plan` DAG where the docs lo
 
   The two differ in a way worth keeping: `loop_rate`'s floor is unreachable because *the task set* does not induce the behaviour, task 5's because *the system* cannot perform it. Same false conclusion from opposite causes — one a gap in what we asked, one a gap in what was wired.
 
-  **Generalised: before reporting that a constraint held, establish that violating it was possible.** For a prohibition, that means naming the path the agent could have taken; for a floor-of-zero metric, naming the case that would have moved it. Both are one sentence to write and neither is implied by a passing test — a test that a forbidden tool was not called passes identically whether the agent showed restraint or the tool was unreachable, and nothing in the trace distinguishes them.
+  **A third case, and it is the one that shows what to do about the other two.** `test_ground_truth.py::test_reference_sql_reproduces_the_verified_number` is *also* currently a guard over an empty set — no seed task is `status: verified` until step 7, so it has nothing to reproduce. The difference is that **it says so**: it skips with `"no task is status: verified yet, so there is no signed-off number to reproduce. Draft tasks present: [...]"`, naming the drafts.
+
+  That is the whole distinction. An empty guard is not itself the defect; an empty guard that reports success is. `loop_rate = 0` and task 5's `forbidden_tools` both come back **green**, and green is indistinguishable from "the constraint bound and held". The ground-truth check comes back **skipped, with its reason**, so no reader can mistake it for evidence.
+
+  **Generalised: before reporting that a constraint held, establish that violating it was possible — and where it wasn't, make the check announce its own vacuity rather than pass.** For a prohibition that means naming the path the agent could have taken; for a floor-of-zero metric, naming the case that would have moved it; for a guard over a set that may be empty, skipping loudly instead of passing on nothing. Neither is implied by a passing test — a test that a forbidden tool went uncalled passes identically whether the agent showed restraint or the tool was unreachable, and nothing in the trace tells them apart. **Announcing is the actionable half of this rule**, because it is the only part that survives the person who wrote the check.
 
   Consequence for 1a, recorded in §5's checklist rather than left implicit: `run_python` ships **proven by tests only**, task 5's trap does not bind until 1b, and the RECORD-mode `ResultRef` test must call the tool directly rather than running seed task 3 through the graph.
 
@@ -413,7 +440,7 @@ Quant Analyst · Validator node · replan edge · failure injection · the seven
 - [ ] 7 task intents drafted in prose (step 3.5) before the dictionary was authored
 - [ ] Metrics dictionary committed: 11 load-bearing + 20 distractors, `corpus_version` in the cassette key
 - [ ] **Retrievability probed, not assumed:** every load-bearing entry is retrieved within `k` by at least one natural phrasing of a task it governs. An entry that cannot be retrieved is not load-bearing, however correct it is — see the ninth silent-failure instance. Verified by `tests/test_corpus_retrievability.py`, which is skipped without the index and must be run deliberately when the corpus changes.
-- [ ] All 5 tools and 2 prompts live; `LocalDockerSandbox` hardened as specified. **Resources are built per consumer, not per count** — `schema://warehouse` is scoped out with a recorded trigger, `docs://metrics/{doc_id}` faces the same test at 5.6 (§2 step 5)
+- [ ] All 5 tools and 2 prompts live; `LocalDockerSandbox` hardened as specified. **Resources are built per consumer, not per count** — `schema://warehouse` is scoped out with a recorded trigger; the `docs://metrics/{doc_id}` decision is taken at **step 6**, where its only possible consumer is built (§2 step 5)
 - [ ] **`run_python` is proven by tests only at 1a, and the checklist says so.** No node can call it — the Quant Analyst is 1b — so "the tool is live" means registered and tested, not exercised by an agent. Seed task 3 cannot run end to end until 1b, and task 5's `forbidden_tools: [run_python]` measures nothing here (see §3)
 - [ ] Docs Analyst node; Planner emits genuine fan-out
 - [ ] 7 seed tasks, all `status: verified` with recorded method
