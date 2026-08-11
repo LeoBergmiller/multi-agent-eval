@@ -7,18 +7,29 @@ which was well-formed text, passed every static check, and did not work. That is
 seventh instance's rule (`gate-1a.md` §3) applied to security flags, where the cost of
 believing an unverified argument is highest.
 
-**Where an outcome test is not practical, it is said here rather than replaced by an
-argv check pretending to be one:**
+**Corrected 2026-08-11: nothing here is unverified.** This module previously recorded
+`--cpus=1.0` and `--security-opt=no-new-privileges` as impractical to test — the first
+because measuring throttling is timing-based and flaky, the second because demonstrating
+it needs a setuid binary. Both were wrong, and probing the container showed it: the
+kernel *reports* its own enforced state, and reading that is an outcome, not an
+argument.
 
-- **`--cpus=1.0`** — verifying a CPU quota means measuring throttling, which is timing
-  based and flaky on a shared runner. A test that fails when the machine is busy trains
-  people to ignore it, which is worse than no test. The flag is in `HARDENING` and its
-  effect is unverified; that is stated rather than papered over.
-- **`--security-opt=no-new-privileges`** — demonstrating it requires a setuid binary in
-  the image, which would mean adding an attack surface *in order to prove it is
-  contained*. Declined; the flag stands unverified.
+    /sys/fs/cgroup/cpu.max   ->  100000 100000     (quota == period, i.e. 1.0 CPU)
+    /proc/self/status        ->  NoNewPrivs: 1
+    /proc/self/status        ->  CapEff: 0000000000000000
 
-Everything else below runs the forbidden thing and asserts it fails.
+That is the same class of evidence as `os.getuid()`, which was accepted for non-root
+without argument. The general form is worth keeping: **"no outcome test is practical"
+is itself a claim, and it was made here without being checked.** A flag whose effect
+seems unobservable is usually observable from inside the thing it constrains — ask what
+the kernel would say, before concluding nothing can.
+
+`CapEff` also turned out to be a *better* test for `--cap-drop=ALL` than the
+port-binding attempt originally sketched: it reads the effective capability set
+directly instead of inferring it from one operation failing.
+
+Everything below either runs the forbidden thing and asserts it fails, or reads the
+kernel's own report of the constraint.
 """
 
 from __future__ import annotations
@@ -158,6 +169,49 @@ class TestHardeningByOutcome:
         )
         assert "NO_CAP" not in result.stdout, (
             "forked 400 processes despite --pids-limit"
+        )
+
+    def test_the_cpu_quota_is_enforced(self, sandbox: LocalDockerSandbox) -> None:
+        """Read the cgroup, do not time the workload.
+
+        `cpu.max` is "<quota> <period>"; `--cpus=1.0` sets quota == period. The kernel
+        reporting its own limit is an outcome; a stopwatch on a shared machine is a
+        coin flip.
+        """
+        result = sandbox.run(
+            "print('CPUMAX', open('/sys/fs/cgroup/cpu.max').read().strip())\n", []
+        )
+        assert result.ok, result.error
+        quota, period = result.stdout.split("CPUMAX", 1)[1].split()[:2]
+        assert quota != "max", "no CPU quota is applied"
+        assert int(quota) == int(period), f"cpu quota {quota} != period {period}"
+
+    def test_no_new_privileges_is_set(self, sandbox: LocalDockerSandbox) -> None:
+        """The kernel's own report, so no setuid binary has to be added to prove it."""
+        result = sandbox.run(
+            "v = [l.split()[1] for l in open('/proc/self/status')\n"
+            "     if l.startswith('NoNewPrivs')]\n"
+            "print('NNP', v[0] if v else 'ABSENT')\n",
+            [],
+        )
+        assert result.ok, result.error
+        value = result.stdout.split("NNP", 1)[1].strip()
+        assert value == "1", f"no_new_privileges is not set: NoNewPrivs={value!r}"
+
+    def test_all_capabilities_are_dropped(self, sandbox: LocalDockerSandbox) -> None:
+        """`CapEff` reads the effective set directly.
+
+        Better than inferring from one privileged operation failing, which proves only
+        that *that* capability is absent.
+        """
+        result = sandbox.run(
+            "print([l.strip() for l in open('/proc/self/status')\n"
+            "       if l.startswith('CapEff')])\n",
+            [],
+        )
+        assert result.ok, result.error
+        assert "0000000000000000" in result.stdout, (
+            f"capabilities remain in the effective set: {result.stdout!r}"
         )
 
     def test_no_docker_socket_is_mounted(self, sandbox: LocalDockerSandbox) -> None:

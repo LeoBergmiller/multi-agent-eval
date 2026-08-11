@@ -43,6 +43,12 @@ CONTAINER_INPUTS = "/inputs"
 #: The hardening set. Every one of these is asserted by outcome where that is practical;
 #: see `tests/test_sandbox_hardening.py` for the two that are not and why.
 HARDENING: tuple[str, ...] = (
+    # Non-root asserted by the INVOCATION, not only by the image's `USER sandbox`.
+    # Without it, non-root is a property of the image and this run relies on
+    # `verify_image_version` to guarantee the image — two independent mechanisms that
+    # happen to line up, with nothing saying they must. The flag costs nothing and
+    # removes the coupling.
+    "--user=10001",
     "--network=none",
     "--read-only",
     "--tmpfs=/tmp:rw,noexec,nosuid,size=64m",
