@@ -285,9 +285,25 @@ tool_error_messages:
 # KEPT:
 #   - the exception CLASS (`KeyError`, `ValueError`, `ZeroDivisionError`)
 #   - the traceback's frame STRUCTURE: file, line number, function name
-#   - the failing SOURCE LINE — this is the model's own code, echoed back. Same argument
-#     as `executed_sql` on run_sql: returning someone their own input is not a leak.
 #   - container-internal paths (`/sandbox/script.py`, `/inputs/q001.parquet`)
+#
+# AMENDED 2026-08-10, at 5.4 step 3, BY RUNNING IT. This list originally kept the failing
+# SOURCE LINE, on the argument that it is the model's own code and returning someone
+# their own input is not a leak (`executed_sql` on run_sql). The first probe of the real
+# sanitiser returned:
+#
+#     At: /sandbox/script.py:7 in <module> — print(df.loc["MEDICARE  "])
+#
+# The source line IS a channel: a model that indexes a frame by a literal puts that
+# literal in its own source. And the `executed_sql` analogy does not hold — run_sql
+# echoes the SQL because the model may not have retained it, whereas here the model
+# submitted the script, so a file and line number index into text it already holds. The
+# source line bought nothing and opened a channel; it is now dropped.
+#
+# Worth keeping as a finding about method, not just about content: this list was written
+# before the code specifically so the rule could not be bent to fit an implementation,
+# and the rule was still wrong. Writing it first stopped it being bent; only executing it
+# showed it was mistaken. The two protections are different and both were needed.
 #
 # DROPPED:
 #   - the exception MESSAGE and args — this is where row data lands
@@ -349,9 +365,10 @@ sandbox_output:
   channels:
     traceback:
       author: the interpreter
-      permitted: exception class, frame structure (file, line, function), the failing
-        source line, container-internal paths
-      prohibited: exception message and args, any rendered local, host paths, runs/ paths
+      permitted: exception class, frame structure (file, line, function),
+        container-internal paths
+      prohibited: exception message and args, source lines, any rendered local,
+        host paths, runs/ paths
     stdout:
       author: the model's own code
       permitted: anything, up to a hard byte and line cap with a truncation marker
