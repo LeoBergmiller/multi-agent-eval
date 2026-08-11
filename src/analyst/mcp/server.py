@@ -5,9 +5,10 @@ ports. §1/§1.5 name the library "FastMCP"; in mcp 2.x that class is
 `MCPServer` (`mcp.server.mcpserver`). The decorator shape §4 shows is
 unchanged, so the tool signature is as specified. See D22.
 
-Gate 1a step 5 registers `run_sql`, `search_metric_definitions`, `describe_schema` and
-`describe_table`. `run_python`, the resource and the prompts follow in this same step —
-absent here rather than stubbed until they land.
+Gate 1a step 5 registers all five tools: `run_sql`, `search_metric_definitions`,
+`describe_schema`, `describe_table` and `run_python`. The two MCP prompts follow at 5.6;
+`schema://warehouse` is scoped out with a recorded trigger and the `docs://` decision is
+taken at step 6, where its only possible consumer is built (see gate-1a.md §2 step 5).
 
 Run standalone:
     python -m analyst.mcp.server --warehouse data/warehouse.duckdb \\
@@ -24,9 +25,11 @@ from pathlib import Path
 from mcp.server.mcpserver import MCPServer
 
 from analyst.artifacts import ResultStore
+from analyst.contracts import ResultRef
 from analyst.mcp.tools.retrieval import DefinitionSearcher, SearchResult
 from analyst.mcp.tools.schema import SchemaDescriber, SchemaSummary, TableProfile
 from analyst.mcp.tools.sql import QueryResult, SqlRunner
+from analyst.sandbox import ExecResult, LocalDockerSandbox
 
 SERVER_NAME = "analyst-warehouse"
 
@@ -95,6 +98,25 @@ def build_server(
             max_rows: Row cap; a LIMIT is applied whether or not you supply one.
         """
         return runner.run(query, max_rows=max_rows)
+
+    # Constructed eagerly, contacted lazily. `LocalDockerSandbox` touches no Docker
+    # daemon until `run()`, so building a server on a machine without Docker is fine —
+    # which is what keeps the hermetic path independent of the optional one.
+    sandbox = LocalDockerSandbox(results_dir)
+
+    @server.tool(name="run_python")
+    def run_python(code: str, inputs: list[ResultRef] | None = None) -> ExecResult:
+        """Execute Python in an isolated container with no network access.
+
+        Inputs are mounted read-only under /inputs; write outputs to /out. Printed
+        output is returned up to a fixed cap. On failure you get the exception type
+        and the line, not the message.
+
+        Args:
+            code: The Python to execute.
+            inputs: References to results the script may read.
+        """
+        return sandbox.run(code, list(inputs or []))
 
     if rag_config is not None:
         _register_retrieval(server, rag_config)

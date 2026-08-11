@@ -37,6 +37,7 @@ from analyst.replay import (
     build_llm_client,
     manifest,
 )
+from analyst.replay.sandbox_identity import sandbox_version
 from analyst.retrieval import corpus_version
 from analyst.telemetry import RunTracing, attrs
 
@@ -70,6 +71,10 @@ async def run_task(
     run_dir = RunDirectory(run_id)
     store = CassetteStore(mode)
     corpus_hash = corpus_version(_repo_root() / "data" / "metrics_dictionary")
+    # Hashed from the committed Dockerfile, so a replayed run keys run_python
+    # cassettes correctly with no Docker daemon — the same property that lets
+    # corpus_version work without the [rag] extra.
+    sandbox_hash = sandbox_version()
 
     with RunTracing(run_dir.spans_path) as tracing:
         async with AsyncExitStack() as stack:
@@ -90,7 +95,12 @@ async def run_task(
                 # `corpus_version` is computed from the COMMITTED corpus, so a
                 # replayed run needs neither the [rag] extra nor a built index to
                 # key its retrieval cassettes correctly (§6.2).
-                mcp=ReplayingMCPClient(inner_mcp, store, corpus_version=corpus_hash),
+                mcp=ReplayingMCPClient(
+                    inner_mcp,
+                    store,
+                    corpus_version=corpus_hash,
+                    sandbox_version=sandbox_hash,
+                ),
                 models=models,
                 agents=agents,
                 cassette_mode=mode.value,

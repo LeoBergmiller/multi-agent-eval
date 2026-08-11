@@ -59,7 +59,6 @@ SERVER = REPO_ROOT / "src" / "analyst" / "mcp" / "server.py"
 #: fails if one lingers, so a stale entry cannot quietly re-open the hole this file
 #: exists to close.
 NOT_YET_BUILT: dict[str, str] = {
-    "run_python": "5.4 — LocalDockerSandbox; see gate-1a.md §2 step 5",
     "docs://metrics/{doc_id}": (
         "decision deferred to step 6, where the Docs Analyst — its only possible "
         "consumer — is built; see gate-1a.md §2 step 5"
