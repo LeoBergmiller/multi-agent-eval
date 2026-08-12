@@ -18,15 +18,13 @@ where the sandbox itself cannot run.
 
 from __future__ import annotations
 
-import shutil
-import subprocess
+import os
 from pathlib import Path
 
 import duckdb
 import pytest
 
 from analyst.contracts import ResultRef
-from analyst.replay import sandbox_identity
 from analyst.sandbox import LocalDockerSandbox
 from analyst.sandbox.output import (
     MAX_STDOUT_LINES,
@@ -103,26 +101,17 @@ class TestStdoutIsCapped:
         assert capped == "median 4.0"
 
 
-def _daemon_and_image() -> bool:
-    if shutil.which("docker") is None:
-        return False
-    try:
-        if subprocess.run(
-            ["docker", "info"], capture_output=True, timeout=15, check=False
-        ).returncode:
-            return False
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return not subprocess.run(
-        ["docker", "image", "inspect", sandbox_identity.SANDBOX_IMAGE],
-        capture_output=True,
-        check=False,
-    ).returncode
+#: Gated on intent, for the reason spelled out in `test_sandbox_hardening.py`: a probe
+#: that asks "is a daemon reachable?" cannot tell "someone forgot `make sandbox`" from
+#: "this runner was never meant to run these", and CI has Docker running.
+#: `test_the_sandbox_prerequisites_are_present` there is the loud half.
+SANDBOX_TESTS_REQUESTED = os.environ.get("SANDBOX_TESTS") == "1"
 
 
 @pytest.mark.integration
 @pytest.mark.skipif(
-    not _daemon_and_image(), reason="needs a Docker daemon and `make sandbox`"
+    not SANDBOX_TESTS_REQUESTED,
+    reason="set SANDBOX_TESTS=1 (or run `make test-sandbox`) to exercise the sandbox",
 )
 class TestNoFrameValueEscapesTheContainer:
     """The whole point, exercised through a real container against a real frame."""

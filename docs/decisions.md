@@ -446,6 +446,7 @@ Demo-mode + video, not a product. Public Streamlit link over 5 committed `runs/`
 | Critic Agent | deterministic validator node suffices |
 | OAuth 2.1 on MCP | multi-tenant or external consumers |
 | `schema://warehouse` MCP resource | a client other than our own graph consumes the server |
+| Sandbox image built and exercised in CI | the hermetic subset drops below a level worth defending, or a sandbox regression escapes local testing |
 | E2B sandbox | multi-tenant untrusted execution I don't operate |
 | Polished consumer UI | P4 carries product weight |
 | Custom trace viewer | LangSmith + `spans.jsonl` renderer suffices |

@@ -34,6 +34,7 @@ kernel's own report of the constraint.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -43,16 +44,36 @@ import pytest
 from analyst.replay import sandbox_identity
 from analyst.sandbox import LocalDockerSandbox
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(
-        shutil.which("docker") is None,
-        reason="needs a local Docker daemon; CI replays from cassettes and has none",
-    ),
-]
+#: **Gated on INTENT, not on availability — and the first version got this wrong.**
+#:
+#: The gate was originally "is a daemon reachable?", written from a developer machine
+#: where the answer separates "sandbox testable" from "sandbox absent". On GitHub's
+#: Ubuntu runners Docker is installed *and running*, so the probe said yes, the image
+#: was absent because nobody runs `make sandbox` there, and the guard added to stop nine
+#: tests skipping silently instead broke CI — twelve failures in the one environment
+#: where skipping is the correct outcome.
+#:
+#: **An environment probe is not an intent probe.** "Daemon up, image missing" means
+#: *someone forgot to build* on a laptop and *this machine was never meant to run these*
+#: on CI. Identical signal, opposite meanings; the condition was written from one point
+#: of view and could not tell them apart.
+#:
+#: So the tests run only when something explicitly asks for them. `make test-sandbox`
+#: sets this; CI never does. That gives all three outcomes correctly: CI skips honestly,
+#: a developer who asks and forgot `make sandbox` gets a loud failure from
+#: `test_the_sandbox_prerequisites_are_present`, and nobody gets a silent skip in an
+#: environment that was supposed to be testing.
+SANDBOX_TESTS_REQUESTED = os.environ.get("SANDBOX_TESTS") == "1"
+
+needs_sandbox = pytest.mark.skipif(
+    not SANDBOX_TESTS_REQUESTED,
+    reason="set SANDBOX_TESTS=1 (or run `make test-sandbox`) to exercise the sandbox",
+)
 
 
 def _daemon_up() -> bool:
+    if shutil.which("docker") is None:
+        return False
     try:
         return (
             subprocess.run(
@@ -75,27 +96,24 @@ def _image_built() -> bool:
     )
 
 
-#: Skip only for a genuine environment absence; FAIL for an operator omission.
-#:
-#: No daemon is CI's normal state and skipping is right. A running daemon with no image
-#: is different: the sandbox is testable here and someone forgot `make sandbox`.
-#: Skipping that hides nine hardening tests behind a green run — and the probe is flaky
-#: enough to matter, since `docker image inspect` returned "No such image" for a tag
-#: `docker images` was listing, moments after the build, while the image store settled.
-#: A transient skip that reports success is how a security guarantee goes unverified.
-needs_sandbox = pytest.mark.skipif(
-    not _daemon_up(), reason="no Docker daemon; CI replays from cassettes and has none"
-)
-
-
+@pytest.mark.integration
 @needs_sandbox
-def test_the_sandbox_image_is_built() -> None:
-    """Fails rather than skips, so the nine tests below cannot vanish quietly."""
+def test_the_sandbox_prerequisites_are_present() -> None:
+    """Loud when the sandbox was asked for and cannot run. Correct once intent-gated.
+
+    Asking for these tests and getting a silent skip is the failure this exists for;
+    asking for them without a daemon or an image is an operator omission, not an
+    environment. Both now fail here instead of quietly vanishing.
+    """
+    assert _daemon_up(), (
+        "SANDBOX_TESTS=1 was set but no Docker daemon is reachable, so every sandbox "
+        "test would skip and the run would look green. Start Docker, or unset the "
+        "variable if you did not mean to run them."
+    )
     assert _image_built(), (
-        f"The Docker daemon is running but {sandbox_identity.SANDBOX_IMAGE!r} does not "
-        "exist, so every hardening test below would skip and the run would look green. "
-        "Build it with `make sandbox`.\n\nIf this fails immediately after a build, "
-        "re-run it — the image store can lag the build by a moment."
+        f"SANDBOX_TESTS=1 was set but {sandbox_identity.SANDBOX_IMAGE!r} does not "
+        "exist. Build it with `make sandbox`.\n\nIf this fails immediately after a "
+        "build, re-run it — the image store can lag the build by a moment."
     )
 
 
@@ -104,6 +122,7 @@ def sandbox(tmp_path: Path) -> LocalDockerSandbox:
     return LocalDockerSandbox(tmp_path / "results", timeout_s=30.0)
 
 
+@pytest.mark.integration
 @needs_sandbox
 class TestHardeningByOutcome:
     def test_the_network_is_unreachable(self, sandbox: LocalDockerSandbox) -> None:
@@ -234,6 +253,7 @@ class TestHardeningByOutcome:
         assert not result.ok
 
 
+@pytest.mark.integration
 @needs_sandbox
 class TestTheWallClockKillsTheContainer:
     def test_no_container_survives_a_timeout(self, tmp_path: Path) -> None:
@@ -270,6 +290,7 @@ class TestTheWallClockKillsTheContainer:
         )
 
 
+@pytest.mark.integration
 @needs_sandbox
 class TestTheImageIsVerifiedBeforeAnythingRuns:
     def test_a_mismatched_image_refuses_to_execute(self, tmp_path: Path) -> None:

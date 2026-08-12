@@ -99,6 +99,14 @@ sandbox:
 	      -t analyst-sandbox:local \
 	      -f docker/sandbox.Dockerfile docker/
 
+# The sandbox tests, which CI deliberately never runs. Gated on INTENT rather than on
+# whether Docker happens to be reachable: GitHub's runners have a running daemon and no
+# image, and a probe asking "can this run?" reads that identically to a laptop where
+# someone forgot to build — opposite meanings, same signal. Asking here is explicit.
+.PHONY: test-sandbox
+test-sandbox: sandbox
+	SANDBOX_TESTS=1 $(PY) -m pytest tests/test_sandbox_hardening.py tests/test_sandbox_output.py
+
 # Live run that also writes cassettes, and the only thing that refreshes the
 # committed demo run. Needs ANTHROPIC_API_KEY and the warehouse.
 record: data
